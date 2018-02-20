@@ -25,7 +25,7 @@ def _is_monotonic(arr):
         indicating whether it's decreasing (-1), or increasing (1)
     """
     diff = np.ediff1d(arr)
-    if not ((diff > 0).all() or (diff < 0).all()):
+    if not ((diff >= 0).all() or (diff <= 0).all()):
         return False, 0
     if (diff > 0).all():
         return True, 1
