@@ -1,5 +1,7 @@
 import os.path
 from os.path import join as pjoin
+from shutil import copyfile
+from os import remove
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
@@ -27,13 +29,20 @@ def test_myapp(qtbot, tmpdir):
     ###########################################
     # load a file
     pth = os.path.dirname(refd.__file__)
-    f = pjoin(pth, 'test', 'c_PLP0000708.dat')
-    myapp.load_data([f])
+    src = pjoin(pth, 'test', 'c_PLP0000708.dat')
+    dst = pjoin(tmpdir, 'c_PLP0000708.dat')
+    copyfile(src, dst)
+
+    myapp.load_data([dst])
     assert(len(model.datastore) == 2)
 
     myapp2 = save_and_reload_experiment(myapp, tmpdir)
     model2 = myapp2.treeModel
     assert(len(model2.datastore) == 2)
+
+    # try and refresh the data using the action
+    # remove(dst)
+    myapp2.on_actionRefresh_Data_triggered()
 
 
 def test_add_spline_save(qtbot, tmpdir):
@@ -54,6 +63,17 @@ def test_add_spline_save(qtbot, tmpdir):
     component = Spline(50, [-1., -1.], [0.33, 0.33], name='spline')
     structure_node.insert_component(1, component)
     save_and_reload_experiment(myapp, tmpdir)
+
+
+def test_select_fit_algorithm(qtbot):
+    # examine the selection of fit algorithms
+    myapp, model = mysetup(qtbot)
+    myapp.on_actionMCMC_triggered()
+    assert(myapp.settings.fitting_algorithm == 'MCMC')
+
+    myapp.on_actionDifferential_Evolution_triggered()
+    myapp.on_actionDifferential_Evolution_triggered()
+    myapp.ui.actionDifferential_Evolution.isChecked()
 
 
 def save_and_reload_experiment(app, tmpdir):

@@ -808,25 +808,21 @@ class MotofitMainWindow(QtWidgets.QMainWindow):
         self.settransformoption('YX2')
 
     def settransformoption(self, transform):
-        self.ui.actionlogY_vs_X.setChecked(False)
-        self.ui.actionY_vs_X.setChecked(False)
-        self.ui.actionYX4_vs_X.setChecked(False)
-        self.ui.actionYX2_vs_X.setChecked(False)
         if transform is None:
-            self.ui.actionY_vs_X.setChecked(True)
             transform = 'lin'
-        if transform == 'lin':
-            self.ui.actionY_vs_X.setChecked(True)
-        elif transform == 'logY':
-            self.ui.actionlogY_vs_X.setChecked(True)
-        elif transform == 'YX4':
-            self.ui.actionYX4_vs_X.setChecked(True)
-        elif transform == 'YX2':
-            self.ui.actionYX2_vs_X.setChecked(True)
+
+        meth = {'logY': self.ui.actionlogY_vs_X,
+                'lin': self.ui.actionY_vs_X,
+                'YX4': self.ui.actionYX4_vs_X,
+                'YX2': self.ui.actionYX2_vs_X
+                }
         self.settings.transformdata = transform
+        meth[transform].setChecked(True)
+        meth.pop(transform)
+        for k, v in meth.items():
+            v.setChecked(False)
 
         self.redraw_data_object_graphs(None, all=True)
-
         # need to relimit graphs and display on a log scale if the transform
         # has changed
         self.reflectivitygraphs.axes[0].autoscale(axis='both',
