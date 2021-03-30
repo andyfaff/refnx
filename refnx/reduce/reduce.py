@@ -579,13 +579,33 @@ class PolarisedReduce:
         # reducers["dd"].reflected_beam.m_spec_sd
         # reducers["dd"].direct_beam.m_spec
         # reducers["dd"].direct_beam.m_spec_sd
-
+        # THIS IS WHERE THE MAGIC HAPPENS
 
         # once the wavelength spectra have been corrected/overwritten then the
-        # reflectivities need to be recalculated
+        # reflectivities need to be recalculated.
+        # this doesn't correct the offspecular
+        for reducer in reducers:
+            reducer.y, reducer.y_err = EP.EPdiv(
+                reducer.reflected_beam.m_spec,
+                reducer.reflected_beam.m_spec_sd,
+                reducer.direct_beam.m_spec,
+                reducer.direct_beam.m_spec_sd,
+            )
+            # now write out the corrected reflectivity files
+            fnames = []
+            datasets = []
+            datafilename = reducer.reflected_beam.datafilename
+            datafilename = os.path.basename(datafilename.split(".nx.hdf")[0])
 
-        # now write out the corrected reflectivity files
-        
+            for i in range(np.size(reducer.y, 0)):
+                data_tup = reducer.data(scanpoint=i)
+                datasets.append(ReflectDataset(data_tup))
+
+                for i, dataset in enumerate(datasets):
+                    fname = f"{datafilename}_{i}.dat"
+                    fnames.append(fname)
+                    with open(fname, "wb") as f:
+                        dataset.save(f)
 
 
 class SpatzReduce(ReflectReduce):
