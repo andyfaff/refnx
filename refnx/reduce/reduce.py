@@ -529,6 +529,14 @@ class PlatypusReduce(ReflectReduce):
         return datasets, deepcopy(reduction)
 
 
+class PolarisedReduce:
+    def __init__(self, spin_set):
+        self.spin_set = spin_set
+
+    def reduce(self, **reduction_options):
+
+
+
 class SpatzReduce(ReflectReduce):
     """
     Reduces Spatz reflectometer data to give the specular reflectivity.
