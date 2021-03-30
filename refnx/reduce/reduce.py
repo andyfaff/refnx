@@ -17,6 +17,7 @@ from refnx.reduce.platypusnexus import (
     basename_datafile,
     SpatzNexus,
     ReductionOptions,
+    calculate_wavelength_bins,
 )
 from refnx.util import ErrorProp as EP
 import refnx.util.general as general
@@ -530,11 +531,61 @@ class PlatypusReduce(ReflectReduce):
 
 
 class PolarisedReduce:
-    def __init__(self, spin_set):
-        self.spin_set = spin_set
+    def __init__(self, spin_set_direct):
+        self.spin_set_direct = spin_set_direct
 
-    def reduce(self, **reduction_options):
+    def reduce(self, spin_set_reflect, **reduction_options):
 
+        # get a default set of reduction options
+        options = ReductionOptions()
+        options.update(reduction_options)
+
+        # set up the wavelength bins
+        if options["wavelength_bins"] is None:
+            wb = calculate_wavelength_bins(
+                options["lo_wavelength"],
+                options["hi_wavelength"],
+                options["rebin_percent"],
+            )
+            options["wavelength_bins"] = wb
+
+        # go through each spin channel and reduce it
+        reducers = {}
+        for sc in ["dd", "uu", "du", "ud"]:
+            # first get the correct reduction options
+            rdo = getattr(self.spin_set_reflect, f"{sc}_opts")
+            if rdo is None:
+                rdo = options
+            else:
+                # overwrite properties that need to be common
+                rdo["wavelength_bins"] = options["wavelength_bins"]
+
+            if sc in ["dd", "du"]:
+                db = getattr(self.spin_set_direct, "dd")
+            elif sc in ["uu", "ud"]:
+                db = getattr(self.spin_set_direct, "uu")
+            rb = getattr(self.spin_set_reflect, sc)
+            if rb is not None:
+                reducer = PlatypusReduce(db)
+                reducer.reduce(rb, save=False, **rdo)
+                reducers[sc] = reducer
+            else:
+                reducers[sc] = None
+
+        # by this point an unpolarised reduction has been done. But we need to
+        # correct the spectra for PNR. The following spectra (N, T) should be
+        # overwritten:
+        # reducers["dd"].reflected_beam.m_spec
+        # reducers["dd"].reflected_beam.m_spec_sd
+        # reducers["dd"].direct_beam.m_spec
+        # reducers["dd"].direct_beam.m_spec_sd
+
+
+        # once the wavelength spectra have been corrected/overwritten then the
+        # reflectivities need to be recalculated
+
+        # now write out the corrected reflectivity files
+        
 
 
 class SpatzReduce(ReflectReduce):
