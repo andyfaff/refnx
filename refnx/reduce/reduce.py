@@ -535,13 +535,9 @@ class PolarisedReduce:
         self.spin_set_direct = spin_set_direct
         self.reducers = {}
         for sc in ["dd", "du"]:
-            self.reducers[sc] = PlatypusReduce(
-                spin_set_direct.dd
-            )
+            self.reducers[sc] = PlatypusReduce(spin_set_direct.dd)
         for sc in ["uu", "ud"]:
-            self.reducers[sc] = PlatypusReduce(
-                spin_set_direct.uu
-            )
+            self.reducers[sc] = PlatypusReduce(spin_set_direct.uu)
 
     def reduce(self, spin_set_reflect, **reduction_options):
         # get a default set of reduction options
