@@ -533,6 +533,15 @@ class PlatypusReduce(ReflectReduce):
 class PolarisedReduce:
     def __init__(self, spin_set_direct):
         self.spin_set_direct = spin_set_direct
+        self.reducers = {}
+        for sc in ["dd", "du"]:
+            self.reducers[sc] = PlatypusReduce(
+                spin_set_direct.dd
+            )
+        for sc in ["uu", "ud"]:
+            self.reducers[sc] = PlatypusReduce(
+                spin_set_direct.uu
+            )
 
     def reduce(self, spin_set_reflect, **reduction_options):
         # get a default set of reduction options
@@ -548,8 +557,9 @@ class PolarisedReduce:
             )
             options["wavelength_bins"] = wb
 
+        reduced_successfully = []
+
         # go through each spin channel and reduce it
-        reducers = {}
         for sc in ["dd", "uu", "du", "ud"]:
             # first get the correct reduction options
             rdo = getattr(spin_set_reflect, f"{sc}_opts")
@@ -559,31 +569,31 @@ class PolarisedReduce:
                 # overwrite properties that need to be common
                 rdo["wavelength_bins"] = options["wavelength_bins"]
 
-            if sc in ["dd", "du"]:
-                db = getattr(self.spin_set_direct, "dd")
-            elif sc in ["uu", "ud"]:
-                db = getattr(self.spin_set_direct, "uu")
+            db = self.reducers[sc]
             rb = getattr(self.spin_set_reflect, sc)
             if rb is not None:
-                reducer = PlatypusReduce(db)
-                reducer.reduce(rb, save=False, **rdo)
-                reducers[sc] = reducer
+                db.reduce(rb, save=False, **rdo)
+                reduced_successfully.append(sc)
             else:
-                reducers[sc] = None
+                # no reflected beam for a spin channel
+                continue
 
         # by this point an unpolarised reduction has been done. But we need to
         # correct the spectra for PNR. The following spectra (N, T) should be
         # overwritten:
-        # reducers["dd"].reflected_beam.m_spec
-        # reducers["dd"].reflected_beam.m_spec_sd
-        # reducers["dd"].direct_beam.m_spec
-        # reducers["dd"].direct_beam.m_spec_sd
+        # TODO
+        # self.reducers["dd"].reflected_beam.m_spec
+        # self.reducers["dd"].reflected_beam.m_spec_sd
+        # self.reducers["dd"].direct_beam.m_spec
+        # self.reducers["dd"].direct_beam.m_spec_sd
         # THIS IS WHERE THE MAGIC HAPPENS
 
         # once the wavelength spectra have been corrected/overwritten then the
         # reflectivities need to be recalculated.
         # this doesn't correct the offspecular
-        for reducer in reducers:
+        for sc in reduced_successfully:
+            reducer = self.reducers[sc]
+            # TODO call something polcorr?
             reducer.y, reducer.y_err = EP.EPdiv(
                 reducer.reflected_beam.m_spec,
                 reducer.reflected_beam.m_spec_sd,
@@ -601,7 +611,7 @@ class PolarisedReduce:
                 datasets.append(ReflectDataset(data_tup))
 
                 for i, dataset in enumerate(datasets):
-                    fname = f"{datafilename}_{i}.dat"
+                    fname = f"{datafilename}_{i}_POLCORR.dat"
                     fnames.append(fname)
                     with open(fname, "wb") as f:
                         dataset.save(f)
