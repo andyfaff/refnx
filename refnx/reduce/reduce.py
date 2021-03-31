@@ -535,7 +535,6 @@ class PolarisedReduce:
         self.spin_set_direct = spin_set_direct
 
     def reduce(self, spin_set_reflect, **reduction_options):
-
         # get a default set of reduction options
         options = ReductionOptions()
         options.update(reduction_options)
@@ -553,7 +552,7 @@ class PolarisedReduce:
         reducers = {}
         for sc in ["dd", "uu", "du", "ud"]:
             # first get the correct reduction options
-            rdo = getattr(self.spin_set_reflect, f"{sc}_opts")
+            rdo = getattr(spin_set_reflect, f"{sc}_opts")
             if rdo is None:
                 rdo = options
             else:
