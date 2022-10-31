@@ -252,8 +252,8 @@ jobs:
         python -m pip install -r requirements.txt
         make html
 
-  lint:
 
+  lint:
     runs-on: ubuntu-latest
     strategy:
       max-parallel: 1
