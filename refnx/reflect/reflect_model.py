@@ -514,9 +514,10 @@ class ReflectModel:
             # fallback to what this object was constructed with
             x_err = float(self.dq)
 
+        slabs = self.structure.slabs()[..., :4]
         return reflectivity(
             x,
-            self.structure.slabs()[..., :4],
+            np.array(slabs),
             scale=self.scale.value,
             bkg=self.bkg.value,
             dq=x_err,

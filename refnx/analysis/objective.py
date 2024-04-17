@@ -674,8 +674,8 @@ class Objective(BaseObjective):
         logl += (y - model) ** 2 / var_y
 
         # nans play havoc
-        if np.isnan(logl).any():
-            raise RuntimeError("Objective.logl encountered a NaN.")
+        # if np.isnan(logl).any():
+        #     raise RuntimeError("Objective.logl encountered a NaN.")
 
         # add on extra 'potential' terms from the model.
         extra_potential = self.model.logp()

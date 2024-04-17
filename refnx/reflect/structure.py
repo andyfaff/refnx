@@ -320,12 +320,12 @@ class Structure(UserList):
             # if all the interfaces are Gaussian, then simply concatenate
             # the default slabs property of each component.
             sl = [c.slabs(structure=self) for c in self.components]
-
+            import jax.numpy as jnp
             try:
-                slabs = np.concatenate(sl)
+                slabs = jnp.concatenate(sl)
             except ValueError:
                 # some of slabs may be None. np can't concatenate arr and None
-                slabs = np.concatenate([s for s in sl if s is not None])
+                slabs = jnp.concatenate([s for s in sl if s is not None])
         else:
             # there is a non-default interfacial roughness, create a microslab
             # representation
@@ -912,8 +912,11 @@ class SLD(Scatterer):
         return f"SLD([{self.real!r}, {self.imag!r}], name={self.name!r})"
 
     def __complex__(self):
-        sldc = complex(self.real.value, self.imag.value)
+        sldc = self.real.value + self.imag.value * 1j
         return sldc
+
+    def complex(self):
+        return self.real.value + self.imag.value * 1j
 
     @property
     def parameters(self):
@@ -1289,22 +1292,22 @@ class Slab(Component):
         Slab representation of this component. See :class:`Component.slabs`
         """
         # speculative shortcut to prevent a number of attribute retrievals
+        import jax.numpy as jnp
         if self.sld.dispersive:
             sldc = self.sld.complex(getattr(structure, "wavelength", None))
         else:
-            sldc = complex(self.sld)
+            sldc = self.sld.complex()
 
-        return np.array(
+        return jnp.array(
             [
                 [
-                    self.thick.value,
+                    self.thick._value,
                     sldc.real,
                     sldc.imag,
-                    self.rough.value,
-                    self.vfsolv.value,
+                    self.rough._value,
+                    self.vfsolv._value,
                 ]
-            ],
-            dtype=float,
+            ]
         )
 
 
