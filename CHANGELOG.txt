@@ -621,3 +621,5 @@ in 0.1.13.
 - remove refnx._lib._qmc, changing to scipy.stats.qmc.
 - transition vendored ptemcee to use np.random.Generator.
 - convert use of scipy.integrate.quadrature to scipy.integrate.quad.
+- add workers keyword to GlobalObjective to enable parallelisation of
+  its log-likelihood.
