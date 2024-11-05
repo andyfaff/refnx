@@ -6,7 +6,7 @@ from scipy.optimize._numdiff import approx_derivative
 import scipy.stats as stats
 
 from refnx.util import ErrorProp as EP
-from refnx._lib import flatten, approx_hess2
+from refnx._lib import flatten, approx_hess2, MapWrapper
 from refnx._lib import unique as f_unique
 from refnx.dataset import Data1D
 from refnx.analysis import (
@@ -1037,9 +1037,27 @@ class GlobalObjective(Objective):
         Multiplies the overall log-prior term for the parameters. Used to
         balance log-prior and log-likelihood terms in the log-posterior.
 
+    workers : int or map-like callable, optional
+        If `workers` is an int the `objectives` are subdivided into `workers`
+        sections and evaluated in parallel
+        (uses `multiprocessing.Pool <multiprocessing>`).
+        Supply -1 to use all available CPU cores.
+        Use of this class as a context manager will ensure that the ``Pool`` is
+        released on exit (provided `workers` is an int). Once the ``Pool``
+        resources are released the evaluation goes back to a serial manner.
+        Alternatively supply a map-like callable, such as
+        `multiprocessing.Pool.map` for evaluating the `objectives` in parallel.
+        This evaluation is carried out as
+        ``workers(evaluator, self.objectives)``. The user is responsible for
+        releasing resources in that case.
+        Requires that the `objectives` are pickleable.
+        It's expected that this keyword be used sparingly. It doesn't make
+        sense to use more workers than objectives.
+        In an analysis scenario there can be multiple levels of
+        parallelisation, be careful of oversubscription.
     """
 
-    def __init__(self, objectives, lambdas=None, alpha=1.0):
+    def __init__(self, objectives, lambdas=None, alpha=1.0, workers=1):
         self.objectives = objectives
 
         nobj = len(objectives)
@@ -1049,7 +1067,6 @@ class GlobalObjective(Objective):
             self.lambdas = np.ones(nobj)
 
         weighted = [objective.weighted for objective in objectives]
-
         self._weighted = np.array(weighted, dtype=bool)
 
         if len(np.unique(self._weighted)) > 1:
@@ -1061,6 +1078,9 @@ class GlobalObjective(Objective):
         self.alpha = alpha
         if alpha is not None:
             self.alpha = possibly_create_parameter(alpha, name="alpha")
+
+        self.workers = workers
+        self._mapwrapper = MapWrapper(pool=workers)
 
     def __str__(self):
         s = [f"{'':_>80}", "\n"]
@@ -1076,6 +1096,18 @@ class GlobalObjective(Objective):
             f" lambdas={list(self.lambdas)!r},"
             f" alpha={self.alpha!r})"
         )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        ret = self._mapwrapper.__exit__(*args)
+        self._mapwrapper = MapWrapper(pool=1)
+        return ret
+
+    def __del__(self):
+        self._mapwrapper.close()
+        self._mapwrapper.terminate()
 
     @property
     def weighted(self):
@@ -1212,12 +1244,11 @@ class GlobalObjective(Objective):
         datasets more heavily (e.g. to make each of the contributions equal).
         """
         self.setp(pvals)
-        logl = 0.0
 
-        for objective, _lambda in zip(self.objectives, self.lambdas):
-            logl += _lambda * objective.logl()
-
-        return logl
+        logls = np.array(
+            list(self._mapwrapper.map(_dummy_logl_func, self.objectives))
+        )
+        return np.sum(logls * self.lambdas)
 
     def plot(self, pvals=None, samples=0, parameter=None, fig=None):
         """
@@ -1454,6 +1485,11 @@ class Transform:
             return yt, None
         else:
             return yt, et
+
+
+def _dummy_logl_func(obj):
+    # returns the logl of the provided object
+    return obj.logl()
 
 
 def pymc_model(objective):

@@ -183,3 +183,16 @@ class TestGlobalFitting:
             + 3.3 * objective366.logl(),
         )
         global_objective.lambdas = np.ones(3)
+
+        # check that the workers keyword works
+        logl = global_objective.logl()
+        with GlobalObjective(
+            [objective361, objective365, objective366], workers=3
+        ) as global_objective:
+            parallel_logl = global_objective.logl()
+        assert_allclose(parallel_logl, logl)
+
+        # see if the logl function can be called again
+        parallel_logl = global_objective.logl()
+        assert_allclose(parallel_logl, logl)
+        del global_objective
