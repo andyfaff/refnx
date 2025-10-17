@@ -301,8 +301,9 @@ def setup_package():
                 sources=["src/_cevent.pyx"],
                 include_dirs=[numpy_include],
                 language="c++",
+                py_limited_api=True,
                 define_macros=[
-                    ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")
+                    ("Py_LIMITED_API", 0x030B0000),
                 ],
                 # libraries=
                 # extra_compile_args = "...".split(),
@@ -314,6 +315,10 @@ def setup_package():
                 sources=["src/_cutil.pyx"],
                 include_dirs=[numpy_include],
                 language="c",
+                py_limited_api=True,
+                define_macros=[
+                    ("Py_LIMITED_API", 0x030B0000),
+                ]
                 # libraries=
                 # extra_compile_args = "...".split(),
             )
@@ -365,8 +370,9 @@ def setup_package():
                 include_dirs=[numpy_include],
                 language="c++",
                 extra_compile_args=["-std=c++11"],
+                py_limited_api=True,
                 define_macros=[
-                    ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")
+                    ("Py_LIMITED_API", 0x030B0000),
                 ],
                 extra_objects=refcalc_obj,
             )
@@ -414,6 +420,7 @@ def setup_package():
 
             info["ext_modules"] = cythonize(ext_modules)
             info["zip_safe"] = False
+            info["options"] = {"bdist_wheel": {"py_limited_api": "cp311"}}
 
     try:
         setup(**info)
