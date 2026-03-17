@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
 
+
 jobs:
 ###############################################################################
   test_linux:
@@ -36,7 +37,7 @@ jobs:
         cache: 'pip' # caching pip dependencies
         allow-prereleases: true
 
-    - name: setup apt dependencies
+    - name: Setup apt dependencies
       run: |
         sudo apt-get update
         sudo apt-get install xvfb qt6-base-dev libhdf5-serial-dev libnetcdf-dev build-essential
@@ -44,14 +45,18 @@ jobs:
 
         python -m pip install --upgrade pip
 
-    - name: Test with pytest
+    - name: Make wheel
       env:
         MPLBACKEND: agg
       run: |
         python -m pip install --upgrade pip
-        python -m pip install wheel build
+        python -m pip install meson-python ninja meson wheel build auditwheel
         python -m build
-        python -m pip install dist/*.whl
+        auditwheel repair dist/*.whl
+
+    - name: Install package and test with pytest
+      run: |
+        python -m pip install wheelhouse/*.whl
         pip install -r .requirements.txt
 
         # uses xvfb for GUI part of the test
@@ -69,38 +74,23 @@ jobs:
       if: ${{ matrix.python-version == '3.13' }}
       run: |
         git clean -xdf
-        python setup.py sdist
+        python -m build --sdist
 
     - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
       if: ${{ matrix.python-version == '3.13' }}
       with:
+        name: refnx-sdist
+        path: dist/*.tar.gz
+
+    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      with:
         name: refnx-wheel-linux-${{ matrix.python-version }}
-        path: dist/
-
-
-#  linux_wheels:
-#
-#    runs-on: ubuntu-latest
-#    strategy:
-#      max-parallel: 2
-#      matrix:
-#        PLAT: ["manylinux2014_x86_64"]
-#
-#    steps:
-#    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-#    - name: Make Linux Wheel
-#      run: |
-#        docker run --rm -e="PLAT=${{ matrix.PLAT }}" -v $(pwd):/io quay.io/pypa/${{ matrix.PLAT }} /bin/bash /io/tools/build_manylinux_wheels.sh
-#
-#    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-#      with:
-#        name: refnx-wheel
-#        path: dist/
+        path: wheelhouse/
 
 
   test_macos:
 
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       fail-fast: true
       max-parallel: 3
@@ -121,15 +111,11 @@ jobs:
     - name: install compilers
       shell: bash
       run: |
-        brew install llvm
+        brew install llvm libomp
 
     - name: Make wheel
       shell: bash
-      env:
-        ARCHFLAGS: "-arch arm64"
-        _PYTHON_HOST_PLATFORM: macosx-11.0-arm64
       run: |
-        sudo xcode-select -s /Applications/Xcode_15.3.app
         export PATH="$PATH:/opt/homebrew/opt/llvm/bin"
         export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
         export LDFLAGS="-L/opt/homebrew/opt/llvm/lib/c++ -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++ -L/opt/homebrew/opt/llvm/lib"
@@ -159,7 +145,7 @@ jobs:
 
   test_macos_app:
     needs: test_macos
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       fail-fast: true
 
@@ -174,7 +160,7 @@ jobs:
     - run: mkdir -p dist
 
     - name: Download wheel
-      uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         pattern: refnx-wheel-macos-3.12
         merge-multiple: true
@@ -275,14 +261,15 @@ jobs:
         allow-prereleases: true
 
     - run: pip install -r .requirements.txt
-
     - run: mkdir -p dist
 
     - name: Make wheel
       run: |
         python -m pip install --upgrade pip
-        python -m pip install wheel
-        python -m pip wheel . --no-deps -w dist
+        python -m pip install wheel build delvewheel
+        # python -m build --wheel -v
+        python -m build --wheel -Csetup-args="--vsenv"
+        delvewheel repair -w dist dist/*.whl
 
     - name: Install package and test with pytest
       if: ${{ matrix.python-version == '3.12' }}
@@ -291,11 +278,6 @@ jobs:
       run: |
         cd dist
         python -m pip install --only-binary=refnx --no-index --find-links=. refnx
-
-        #        python -m pip install pytools mako cffi
-        #        choco install opencl-intel-cpu-runtime
-        #        python -m pip install --only-binary=pyopencl --find-links http://www.silx.org/pub/wheelhouse/ --trusted-host www.silx.org pyopencl
-
         pytest --pyargs refnx
         cd ..
 
