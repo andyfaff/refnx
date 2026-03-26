@@ -20,13 +20,12 @@ jobs:
 ###############################################################################
   test_linux:
 
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
-      max-parallel: 3
       matrix:
         python-version: ['3.12', '3.13', '3.14']
-
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
 
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -43,8 +42,6 @@ jobs:
         sudo apt-get install xvfb qt6-base-dev libhdf5-serial-dev libnetcdf-dev build-essential
         sudo apt-get install '^libxcb.*-dev' libx11-xcb-dev libglu1-mesa-dev libxrender-dev libxi-dev libxkbcommon-dev libxkbcommon-x11-dev
 
-        python -m pip install --upgrade pip
-
     - name: Make wheel
       env:
         MPLBACKEND: agg
@@ -58,10 +55,9 @@ jobs:
       run: |
         python -m pip install wheelhouse/*.whl
         pip install -r .requirements.txt
-
-        # uses xvfb for GUI part of the test
+        export QT_QPA_PLATFORM=offscreen
         pushd tools
-        xvfb-run pytest --pyargs refnx
+        pytest --pyargs refnx
         popd
 
         # check that refnx gui starts
@@ -70,21 +66,9 @@ jobs:
         # run vendored ptemcee tests
         pytest --pyargs refnx._lib.ptemcee.tests
 
-    - name: Make sdist
-      if: ${{ matrix.python-version == '3.13' }}
-      run: |
-        git clean -xdf
-        python -m build --sdist
-
-    - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-      if: ${{ matrix.python-version == '3.13' }}
-      with:
-        name: refnx-sdist
-        path: dist/*.tar.gz
-
     - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
       with:
-        name: refnx-wheel-linux-${{ matrix.python-version }}
+        name: refnx-wheel-${{ matrix.os }}-${{ matrix.python-version }}
         path: wheelhouse/
 
 
