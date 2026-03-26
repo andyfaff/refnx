@@ -112,7 +112,7 @@ jobs:
     - name: Install package and test with pytest
       shell: bash
       env:
-        MPLBACKEND: agg
+        QT_QPA_PLATFORM: offscreen
       run: |
         python -m pip install -r .requirements.txt
         pushd dist
