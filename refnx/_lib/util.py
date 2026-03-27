@@ -238,10 +238,20 @@ class MapWrapper:
             self.pool = pool
             self._mapfunc = self.pool
         else:
-            # user supplies a number
+            # Always respect a user supplied number.
             if int(pool) == -1:
+                # The default is to use as many processes as possible.
+                # See if the user has specified a limit via an environment
+                # variable though.
+                # If there's no environment variable then num_procs = None
+                # and creating the Pool will use as many processes as
+                # possible.
+                num_procs = _os.getenv("NUM_PROCS")
+                if num_procs is not None:
+                    num_procs = int(num_procs)
+
                 # use as many processors as possible
-                self.pool = ctx.Pool()
+                self.pool = ctx.Pool(num_procs)
                 self._mapfunc = self.pool.map
                 self._own_pool = True
             elif int(pool) in [0, 1]:
