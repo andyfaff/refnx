@@ -22,7 +22,8 @@ py3.extension_module(
   install: true,
   include_directories: [inc_np],
   dependencies: [np_dep],
-  subdir: 'refnx/reduce/' # Places it in my_package.submodules
+  subdir: 'refnx/reduce/', # Places it in my_package.submodules
+  limited_api: '3.11'
 )
 
 install_subdir('tests',
