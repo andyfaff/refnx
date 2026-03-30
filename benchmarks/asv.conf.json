@@ -62,6 +62,8 @@
         "pip": [],
         "meson": [],
         "ninja": [],
+        "pandas": [],
+        "h5py": [],
     },
 
     "build_command": "python -mpip wheel --no-deps --no-build-isolation --no-index -w {build_cache_dir} {build_dir}",
