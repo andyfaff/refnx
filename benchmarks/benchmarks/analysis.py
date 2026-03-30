@@ -1,4 +1,5 @@
 import os.path
+import multiprocessing as mp
 import numpy as np
 
 from .common import Benchmark
@@ -35,16 +36,20 @@ class curvefitter(Benchmark):
 
         data = Data1D(data=(x, y, y_err))
 
-        p = Parameter(b_ls, 'b', vary=True, bounds=(-100, 100))
-        p |= Parameter(m_ls, 'm', vary=True, bounds=(-100, 100))
+        p = Parameter(b_ls, "b", vary=True, bounds=(-100, 100))
+        p |= Parameter(m_ls, "m", vary=True, bounds=(-100, 100))
 
         model = Model(p, fitfunc=line)
         self.objective = Objective(model, data)
         self.mcfitter = CurveFitter(self.objective)
         self.mcfitter_t = CurveFitter(self.objective, ntemps=20)
 
-        self.mcfitter.initialise('prior')
-        self.mcfitter_t.initialise('prior')
+        self.mcfitter.initialise("prior")
+        self.mcfitter_t.initialise("prior")
+        self.pool = mp.get_context("spawn").Pool()
+
+    def teardown(self):
+        self.pool.close()
 
     def time_sampler(self):
         # to get an idea of how fast the actual sampling is.
@@ -54,4 +59,5 @@ class curvefitter(Benchmark):
     def time_sampler_pool(self):
         # see how the multiprocessing in curvefitter performs
         # automatically use all the cores available
-        self.mcfitter_t.sample(20, pool=-1)
+        if __name__ == "__main__":
+            self.mcfitter_t.sample(20, pool=self.pool.map)
