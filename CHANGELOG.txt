@@ -716,3 +716,4 @@ in 0.1.13.
 - Modified some reflect.tests.test_reflect::TestReflect::test_reflectivity_emcee
   to use fewer processes.
 - Add linux_aarch64 testing in CI.
+- Maintenance on asv benchmarks, adding several benchmarks in the process.
