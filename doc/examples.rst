@@ -19,3 +19,4 @@ Examples
     using_mpi.ipynb
     energy_dispersive.ipynb
     orso.ipynb
+    different_roughness.ipynb
