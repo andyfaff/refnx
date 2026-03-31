@@ -14,7 +14,6 @@ from refnx._lib._testutils import PytestTester
 # except ImportError:
 from refnx._lib.util import unique, flatten
 
-
 test = PytestTester(__name__)
 del PytestTester
 
