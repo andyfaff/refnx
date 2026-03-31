@@ -1,7 +1,8 @@
 import numpy as np
 
 from refnx.analysis import Parameter, Parameters
-from refnx._lib import flatten, unique
+from refnx._lib._cutil import c_flatten
+from refnx._lib.util import flatten
 
 from .common import Benchmark
 
@@ -23,6 +24,9 @@ class Flatten(Benchmark):
         rng = np.random.default_rng(1892908)
         p = Parameters()
         self.p = create(20, p, rng)
+
+    def time_cflatten(self):
+        list(c_flatten(self.p))
 
     def time_flatten(self):
         list(flatten(self.p))
