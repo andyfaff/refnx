@@ -718,3 +718,4 @@ in 0.1.13.
 - Add linux_aarch64 testing in CI.
 - Maintenance on asv benchmarks, adding several benchmarks in the process.
 - Example notebook on the different roughness models available in refnx.
+- Overhaul the batch fitting notebook.
