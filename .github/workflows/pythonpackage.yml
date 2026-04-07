@@ -45,9 +45,10 @@ jobs:
         MPLBACKEND: agg
       run: |
         python -m pip install --upgrade pip
-        python -m pip install meson-python ninja meson wheel build auditwheel
+        python -m pip install meson-python ninja meson wheel build auditwheel abi3audit
         python -m build
         auditwheel repair dist/*.whl
+        abi3audit --strict --report dist/refnx*.whl
 
     - name: Install package and test with pytest
       run: |
@@ -116,10 +117,11 @@ jobs:
         export LDFLAGS="-L/opt/homebrew/opt/llvm/lib/c++ -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++ -L/opt/homebrew/opt/llvm/lib"
 
         python -m pip install --upgrade pip
-        python -m pip install wheel delocate build
+        python -m pip install wheel delocate build abi3audit
         python -m build . -v
         # so that libomp is distributed with wheel
         delocate-wheel -v dist/refnx*.whl
+        abi3audit --strict --report dist/refnx*.whl
 
     - name: Install package and test with pytest
       shell: bash
@@ -260,10 +262,11 @@ jobs:
     - name: Make wheel
       run: |
         python -m pip install --upgrade pip
-        python -m pip install wheel build delvewheel
+        python -m pip install wheel build delvewheel abi3audit
         # python -m build --wheel -v
         python -m build --wheel -Csetup-args="--vsenv"
         delvewheel repair -w dist dist/*.whl
+        abi3audit --strict --report dist/refnx*.whl
 
     - name: Install package and test with pytest
       if: ${{ matrix.python-version == '3.12' }}

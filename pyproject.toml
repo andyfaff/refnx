@@ -95,6 +95,7 @@ ignore = ["F401", "F405", "E501", "E203", "E231"]
 skip = "cp38-* cp39-* cp310-*"
 test-requires = ["pytest", "periodictable"]
 test-command = "pytest --pyargs refnx.reflect.tests.test_reflect"
+build = "cp311-*"
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "arm64"]
