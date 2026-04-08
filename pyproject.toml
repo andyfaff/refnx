@@ -89,7 +89,7 @@ ignore = ["F401", "F405", "E501", "E203", "E231"]
 
 
 [tool.cibuildwheel]
-skip = "pp* cp36-* cp37-* cp38-* cp39-* cp310-*"
+skip = "cp38-* cp39-* cp310-*"
 test-requires = ["pytest", "periodictable"]
 test-command = "pytest --pyargs refnx.reflect.tests.test_reflect"
 

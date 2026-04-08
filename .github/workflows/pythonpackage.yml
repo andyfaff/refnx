@@ -19,7 +19,6 @@ permissions:
 jobs:
 ###############################################################################
   test_linux:
-
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
@@ -71,8 +70,21 @@ jobs:
         path: wheelhouse/
 
 
-  test_macos:
+###############################################################################
+  check_cibuildwheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: build wheel
+        uses: pypa/cibuildwheel@ee02a1537ce3071a004a6b08c41e72f0fdc42d9a # v3.4.0
+        env:
+          CIBW_TEST_COMMAND: pytest --pyargs refnx.reflect.tests.test_reflect
+          CIBW_BUILD: "cp311-manylinux_x86_64"
+
+
+###############################################################################
+  test_macos:
     runs-on: macos-15
     strategy:
       fail-fast: true
@@ -226,7 +238,6 @@ jobs:
 
 ###############################################################################
   test_win:
-
     runs-on: windows-latest
     strategy:
       fail-fast: true
