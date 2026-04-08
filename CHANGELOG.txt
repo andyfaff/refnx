@@ -719,3 +719,4 @@ in 0.1.13.
 - Maintenance on asv benchmarks, adding several benchmarks in the process.
 - Example notebook on the different roughness models available in refnx.
 - Overhaul the batch fitting notebook.
+- Use the limited Python ABI, meaning that we only need one wheel per platform.

@@ -32,7 +32,8 @@ py3.extension_module(
   override_options : ['cython_language=cpp'],
   include_directories: [inc_np, '../../src', '../../src/pnr'],
   dependencies: [np_dep],
-  subdir: 'refnx/reflect'
+  subdir: 'refnx/reflect',
+  limited_api: '3.11'
 )
 
 if omp_dep.found()
@@ -49,7 +50,8 @@ if omp_dep.found()
       override_options : ['cython_language=cpp'],
       include_directories: [inc_np, '../../src', '../../src/pnr'],
       dependencies: [np_dep, omp_dep],
-      subdir: 'refnx/reflect'
+      subdir: 'refnx/reflect',
+      limited_api: '3.11'
     )
 endif
 

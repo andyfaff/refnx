@@ -22,7 +22,7 @@ jobs:
         env:
           CIBW_TEST_COMMAND: pytest --pyargs refnx.reflect.tests.test_reflect
           CIBW_ARCHS_MACOS: "x86_64 arm64"
-          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET="10.13"
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET="10.15"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -40,7 +40,7 @@ jobs:
         uses: pypa/cibuildwheel@ee02a1537ce3071a004a6b08c41e72f0fdc42d9a # v3.4.0
         env:
           CIBW_TEST_COMMAND: pytest --pyargs refnx.reflect.tests.test_reflect
-          CIBW_BUILD: "*-manylinux_x86_64"
+          CIBW_BUILD: "cp311-manylinux_x86_64"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -58,7 +58,7 @@ jobs:
         uses: pypa/cibuildwheel@ee02a1537ce3071a004a6b08c41e72f0fdc42d9a # v3.4.0
         env:
           CIBW_TEST_COMMAND: pytest --pyargs refnx.reflect.tests.test_reflect
-          CIBW_BUILD: "*-manylinux_aarch64"
+          CIBW_BUILD: "cp311-manylinux_aarch64"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -76,7 +76,7 @@ jobs:
         uses: pypa/cibuildwheel@ee02a1537ce3071a004a6b08c41e72f0fdc42d9a # v3.4.0
         env:
           CIBW_TEST_COMMAND: pytest --pyargs refnx.reflect.tests.test_reflect
-          CIBW_BUILD: "*-musllinux_x86_64"
+          CIBW_BUILD: "cp311-musllinux_x86_64"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:

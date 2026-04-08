@@ -12,7 +12,8 @@ py3.extension_module(
   '_cutil',
   '../../src/_cutil.pyx',
   install: true,
-  subdir: 'refnx/_lib/' # Places it in my_package.submodules
+  subdir: 'refnx/_lib/', # Places it in my_package.submodules
+  limited_api: '3.11'
 )
 
 install_subdir('emcee',

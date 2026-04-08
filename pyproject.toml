@@ -15,7 +15,7 @@ authors = [{name="Andrew Nelson", email="andyfaff+refnx@gmail.com"}]
 description = "Neutron and X-ray Reflectometry Analysis"
 license = "BSD-3-Clause"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dynamic = []
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -74,6 +74,9 @@ refnx = "refnx.reflect:main"
 line-length = 79
 extend-exclude="refnx/_lib/emcee/|refnx/_lib/ptemcee/|benchmarks"
 
+[tool.meson-python]
+limited-api=true
+
 
 [tool.ruff]
 exclude = [
@@ -92,6 +95,7 @@ ignore = ["F401", "F405", "E501", "E203", "E231"]
 skip = "cp38-* cp39-* cp310-*"
 test-requires = ["pytest", "periodictable"]
 test-command = "pytest --pyargs refnx.reflect.tests.test_reflect"
+build = "cp311-*"
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "arm64"]
