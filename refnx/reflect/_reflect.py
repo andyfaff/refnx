@@ -54,6 +54,34 @@ the sqrt calculation takes too long. The C implementation is only just ahead of
 the python implementation!
 """
 
+"""
+q = np.linspace(0.01, 0.5, 5000)
+w = np.array([[0, 2.07, 0, 0],
+              [100, 3.47, 0, 3],
+              [500, -0.5, 0.00001, 3],
+              [100, 3.47, 0, 3],
+              [500, -0.5, 0.00001, 3],
+              [0, 6.36, 0, 3]])
+
+for bend in available_backends():
+    with use_reflect_backend(bend) as a:
+        print(bend)
+        %timeit a(q, w)
+
+python
+1.36 ms ± 8.09 μs per loop (mean ± std. dev. of 7 runs, 1,000 loops each)
+c
+423 μs ± 12.4 μs per loop (mean ± std. dev. of 7 runs, 1,000 loops each)
+c_parratt
+338 μs ± 2.53 μs per loop (mean ± std. dev. of 7 runs, 1,000 loops each)
+cython
+424 μs ± 585 ns per loop (mean ± std. dev. of 7 runs, 1,000 loops each)
+py_parratt
+1.2 ms ± 1.37 μs per loop (mean ± std. dev. of 7 runs, 1,000 loops each)
+cython_parratt
+370 μs ± 2.21 μs per loop (mean ± std. dev. of 7 runs, 1,000 loops each)
+"""
+
 
 class _Abeles_pyopencl:
     def __init__(self):
