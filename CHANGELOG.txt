@@ -723,3 +723,4 @@ in 0.1.13.
 
 0.1.64
 ------
+- Fixed an issue with the manual beam finder due to a numpy/matplotlib change.
