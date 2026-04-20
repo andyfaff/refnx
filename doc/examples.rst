@@ -20,3 +20,4 @@ Examples
     energy_dispersive.ipynb
     orso.ipynb
     different_roughness.ipynb
+    non_gauss_resolution.ipynb
