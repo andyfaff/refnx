@@ -1750,6 +1750,8 @@ def choose_dq_type(objective):
         a percentage) Q resolution is quicker.
     """
     # choose which resolution smearing approach to use
+    import timeit
+
     if objective.data.x_err is None or not isinstance(
         objective.model, (ReflectModel, MixedReflectModel)
     ):
@@ -1759,26 +1761,19 @@ def choose_dq_type(objective):
 
     # time how long point-by-point takes
     objective.model.dq_type = "pointwise"
-    start = time.time()
-    for i in range(100):
-        objective.generative()
-    time_pp = time.time() - start
+    t = timeit.Timer(lambda: objective.generative)
+    number_pp, time_pp = t.autorange()
+    loop_pp = time_pp / number_pp
 
-    x_err = objective.data.x_err
-    objective.data.x_err = None
-    dq = 10.0 * x_err / objective.data.x
-    objective.model.dq.value = np.mean(dq)
     objective.model.dq_type = "constant"
-    start = time.time()
-    for i in range(100):
-        objective.generative()
-    const_pp = time.time() - start
+    t2 = timeit.Timer(lambda: objective.generative)
+    number_const, time_const = t2.autorange()
+    loop_const = time_const / number_const
 
-    # replace original state
-    objective.data.x_err = x_err
     objective.model.dq_type = original_method
-    #     print(f"Constant: {const_pp}, point-by-point: {time_pp}")
-    if const_pp < time_pp:
+
+    print(f"Constant: {loop_const*1e6} us, point-by-point: {loop_pp*1e6} us")
+    if loop_const < loop_pp:
         # if constant resolution smearing better.
         return "constant"
     return "pointwise"
