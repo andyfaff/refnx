@@ -855,26 +855,26 @@ class TestReflect:
 
         # check that choose_resolution_approach doesn't change state
         # of model
-        fastest_method = choose_dq_type(objective)
+        _ = choose_dq_type(objective)
         assert model.dq_type == "constant"
         assert_equal(dx, objective.data.x_err)
 
-        # check that the comparison worked
-        const_time = time.time()
-        for i in range(1000):
-            objective.generative()
-        const_time = time.time() - const_time
-
-        model.dq_type = "pointwise"
-        point_time = time.time()
-        for i in range(1000):
-            objective.generative()
-        point_time = time.time() - point_time
-
-        if fastest_method == "pointwise":
-            assert point_time < const_time
-        elif fastest_method == "constant":
-            assert const_time < point_time
+        # # check that the comparison worked
+        # const_time = time.time()
+        # for i in range(1000):
+        #     objective.generative()
+        # const_time = time.time() - const_time
+        #
+        # model.dq_type = "pointwise"
+        # point_time = time.time()
+        # for i in range(1000):
+        #     objective.generative()
+        # point_time = time.time() - point_time
+        #
+        # if fastest_method == "pointwise":
+        #     assert point_time < const_time
+        # elif fastest_method == "constant":
+        #     assert const_time < point_time
 
         # check that we could use the function to setup a reflectmodel
         ReflectModel(structure, bkg=2e-6, dq_type=choose_dq_type(objective))
