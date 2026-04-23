@@ -337,7 +337,7 @@ class Structure(UserList):
             slabs[1:, 3] = roughnesses[::-1]
             slabs[0, 3] = 0.0
 
-        if (slabs[:, 4] > 0).any():
+        if np.count_nonzero(slabs[:, 4]):
             # overall SLD is a weighted average of the vfs and slds
             # accessing self.solvent leads to overhead from object
             # creation.
