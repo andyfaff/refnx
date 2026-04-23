@@ -855,7 +855,7 @@ class TestReflect:
 
         # check that choose_resolution_approach doesn't change state
         # of model
-        fastest_method = choose_dq_type(objective)
+        _ = choose_dq_type(objective)
         assert model.dq_type == "constant"
         assert_equal(dx, objective.data.x_err)
 
