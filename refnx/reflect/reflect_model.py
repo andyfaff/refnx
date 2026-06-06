@@ -1297,10 +1297,7 @@ def _smeared_kernel_constant(q, w, resolution, threads=-1, fkernel=kernel):
     gaussnum = 51
     gaussgpoint = (gaussnum - 1) // 2  # integer arithmetic; was float 25.0
 
-    # OPT: assume q is sorted (always true for reflectometry data) → O(1)
-    #      instead of two O(N) scans.
-    lowq = q[0] if q[0] > 0 else (q[q > 0][0] if np.any(q > 0) else 1e-6)
-    highq = q[-1]
+    lowq, highq = np.min(q), np.max(q)
 
     # OPT: simplified interpnum — outer abs(abs()) and no-op `1 *` removed.
     start = np.log10(lowq) - 6 * res_frac / _FWHM
