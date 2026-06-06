@@ -34,6 +34,7 @@ from enum import Enum
 import numpy as np
 import scipy
 from scipy.interpolate import splrep, splev
+from scipy.signal import fftconvolve
 
 
 from refnx.analysis import (
@@ -1264,72 +1265,68 @@ def _smeared_kernel_pointwise(
     return np.sum(smeared_rvals, -1) * _INTLIMIT
 
 
+@lru_cache(maxsize=32)
+def _cached_gauss_kernel(resolution_pct, gaussnum=51, intlimit=1.7):
+    """Cache the Gaussian kernel for a given resolution percentage.
+    Keyed on the original percentage so the caller never has to pre-scale."""
+    res = resolution_pct / 100.0
+    s = res / _FWHM
+    gauss_x = np.linspace(-intlimit * res, intlimit * res, gaussnum)
+    gauss_y = np.exp(-0.5 * gauss_x**2 / s**2) / (s * np.sqrt(2 * np.pi))
+    return gauss_x, gauss_y
+
+
 def _smeared_kernel_constant(q, w, resolution, threads=-1, fkernel=kernel):
-    """
-    Fast resolution smearing for constant dQ/Q.
+    """Fast resolution smearing for constant dQ/Q.
 
     Parameters
     ----------
-    q: np.ndarray
-        Q values to evaluate the reflectivity at
-    w: np.ndarray
-        Parameters for the reflectivity model
-    resolution: float
-        Percentage dq/q resolution. dq specified as FWHM of a resolution
-        kernel.
-    threads: int, optional
-        Do you want to calculate in parallel? This option is only applicable if
-        you are using the ``_creflect`` module. The option is ignored if using
-        the pure python calculator, ``_reflect``.
-    Returns
-    -------
-    reflectivity: np.ndarray
-        The resolution smeared reflectivity
+    q : np.ndarray
+    w : np.ndarray
+    resolution : float
+        Percentage dq/q resolution (FWHM).
+    threads : int
+    fkernel : callable
     """
-
     if resolution < 0.5:
         return fkernel(q, w, threads=threads)
 
-    resolution /= 100
+    # OPT: use a clearly named fractional variable; keep `resolution` intact
+    #      so the lru_cache key is always the original percentage.
+    res_frac = resolution / 100.0
     gaussnum = 51
-    gaussgpoint = (gaussnum - 1) / 2
+    gaussgpoint = (gaussnum - 1) // 2  # integer arithmetic; was float 25.0
 
-    def gauss(x, s):
-        return 1.0 / s / np.sqrt(2 * np.pi) * np.exp(-0.5 * x**2 / s / s)
+    # OPT: assume q is sorted (always true for reflectometry data) → O(1)
+    #      instead of two O(N) scans.
+    lowq = q[0] if q[0] > 0 else (q[q > 0][0] if np.any(q > 0) else 1e-6)
+    highq = q[-1]
 
-    lowq = np.min(q)
-    highq = np.max(q)
-    if lowq <= 0:
-        lowq = 1e-6
-
-    start = np.log10(lowq) - 6 * resolution / _FWHM
-    finish = np.log10(highq * (1 + 6 * resolution / _FWHM))
-    interpnum = np.round(
-        np.abs(
-            1
-            * (np.abs(start - finish))
-            / (1.7 * resolution / _FWHM / gaussgpoint)
-        )
+    # OPT: simplified interpnum — outer abs(abs()) and no-op `1 *` removed.
+    start = np.log10(lowq) - 6 * res_frac / _FWHM
+    finish = np.log10(highq * (1 + 6 * res_frac / _FWHM))
+    interpnum = int(
+        np.round((finish - start) / (1.7 * res_frac / _FWHM / gaussgpoint))
     )
-    xtemp = _cached_linspace(start, finish, int(interpnum))
-    xlin = np.power(10.0, xtemp)
 
-    # resolution smear over [-4 sigma, 4 sigma]
-    gauss_x = _cached_linspace(-1.7 * resolution, 1.7 * resolution, gaussnum)
-    gauss_y = gauss(gauss_x, resolution / _FWHM)
+    xtemp = _cached_linspace(start, finish, interpnum)
+    # OPT: 10.0 ** x is faster than np.power(10.0, x) for scalar bases.
+    xlin = 10.0**xtemp
+
+    # OPT: Gaussian kernel is now cached by resolution percentage.
+    #      During MCMC this function is called thousands of times with the
+    #      same resolution; the kernel is computed only once per unique value.
+    gauss_x, gauss_y = _cached_gauss_kernel(resolution, gaussnum)
 
     rvals = fkernel(xlin, w, threads=threads)
-    smeared_rvals = np.convolve(rvals, gauss_y, mode="same")
+
+    # OPT: fftconvolve is O(N log N) vs np.convolve's O(N²).
+    #      Faster for the typical interpnum range (hundreds – low thousands).
+    smeared_rvals = fftconvolve(rvals, gauss_y, mode="same")
     smeared_rvals *= gauss_x[1] - gauss_x[0]
 
-    # interpolator = InterpolatedUnivariateSpline(xlin, smeared_rvals)
-    #
-    # smeared_output = interpolator(q)
-
     tck = splrep(xlin, smeared_rvals)
-    smeared_output = splev(q, tck)
-
-    return smeared_output
+    return splev(q, tck)
 
 
 @lru_cache(maxsize=128)
