@@ -18,6 +18,9 @@ py3.install_sources([
   subdir: 'refnx/reflect'
 )
 
+# everything depends on numpy
+dependencies = [np_dep]
+
 srcs = ['../../src/_creflect.pyx', '../../src/refcaller.cpp', '../../src/pnr/magnetic.cc']
 if is_windows and not is_mingw
   srcs += '../../src/refcalc.cpp'
@@ -38,6 +41,9 @@ safer_args = cc.get_supported_arguments([
   # -ffinite-math-only    UNSAFE: bad SLD params could produce NaN/Inf
 ])
 
+if omp_dep.found()
+  dependencies += omp_dep
+ endif
 
 py3.extension_module(
   '_creflect',
@@ -45,7 +51,7 @@ py3.extension_module(
   install: true,
   override_options : ['cython_language=cpp'],
   include_directories: [inc_np, '../../src', '../../src/pnr'],
-  dependencies: [np_dep],
+  dependencies: dependencies,
   subdir: 'refnx/reflect',
   limited_api: '3.11',
   c_args: safer_args,

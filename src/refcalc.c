@@ -57,6 +57,11 @@ However, the following remains the fastest calculation  so far.
 #include "string.h"
 #include "tgmath.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+
 /*
  * Portable sincos wrapper.
  * All paths result in a single combined sin/cos operation on
@@ -183,8 +188,13 @@ void abeles(int numcoefs, const double *restrict coefP, int npoints,
    * ------------------------------------------------------------------ */
 
   int j = 0;
+  int nbatches = npoints / BATCH;
 
-  for (; j <= npoints - BATCH; j += BATCH) {
+  #ifdef _OPENMP
+  #pragma omp parallel for schedule(static)
+  #endif
+  for (int ib = 0; ib < nbatches; ib++) {
+    int j = ib * BATCH;
 
     double kn_re[BATCH], kn_im[BATCH];
     double qq2_re[BATCH]; /* add this — constant per Q-point */
@@ -310,7 +320,7 @@ void abeles(int numcoefs, const double *restrict coefP, int npoints,
    * Scalar tail: handle remaining points when npoints % BATCH != 0.
    * Reuse the original scalar abeles logic for simplicity.
    * ------------------------------------------------------------------ */
-  for (; j < npoints; j++) {
+  for (int j = nbatches * BATCH; j < npoints; j++) {
     double complex kn, kn_next, rj, beta;
     _Complex double MRtotal[2][2];
     double complex oneC = CMPLX(1., 0.);
