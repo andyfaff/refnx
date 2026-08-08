@@ -15,6 +15,7 @@ import sys
 from importlib import resources
 
 from qtpy import QtWidgets, QtCore
+from qtpy.compat import getopenfilename, getsavefilename
 
 import refnx.analysis
 from refnx.dataset import ReflectDataset
@@ -24,6 +25,7 @@ from refnx.analysis import Objective
 from models import StructureTreeModel, ParameterTableModel
 from controllers import FitController
 from plotting import PlotController
+import persistence
 
 
 def build_demo_objective():
@@ -63,6 +65,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fit_controller.finished.connect(self.on_fit_finished)
 
         self._build_ui()
+        self._build_menus()
         self.plot_controller.update(self.objective)
 
     def _build_ui(self):
@@ -102,6 +105,96 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
         self.setStatusBar(QtWidgets.QStatusBar())
+
+    def _build_menus(self):
+        file_menu = self.menuBar().addMenu("&File")
+
+        load_data_action = file_menu.addAction("Load Data...")
+        load_data_action.triggered.connect(self.on_load_data_triggered)
+
+        load_model_action = file_menu.addAction("Load Model...")
+        load_model_action.triggered.connect(self.on_load_model_triggered)
+
+        file_menu.addSeparator()
+
+        save_model_action = file_menu.addAction("Save Model...")
+        save_model_action.triggered.connect(self.on_save_model_triggered)
+
+    def msg(self, text, timeout=8000):
+        # non-modal, same reasoning as the production app: routine
+        # messages shouldn't interrupt the workflow with a dialog.
+        self.statusBar().showMessage(text, timeout)
+        print(text)
+
+    def _set_objective(self, new_objective):
+        """
+        Swap in a new Objective (new data and/or new model) and refresh
+        every view from it. This is the one place that needs to know
+        about the tree/table/plot all at once -- everywhere else they're
+        independent.
+        """
+        self.objective = new_objective
+        structure = new_objective.model.structure
+
+        self.structure_model.set_structure(structure)
+        self.tree_view.expandAll()
+        self.parameter_model.set_parameters(structure.parameters.flattened())
+
+        self.plot_controller.reset()
+        self.plot_controller.update(new_objective)
+
+    def on_load_data_triggered(self):
+        path, ok = getopenfilename(
+            self, caption="Select a reflectivity dataset"
+        )
+        if not ok or not path:
+            return
+
+        try:
+            dataset = ReflectDataset(path)
+        except Exception as e:
+            self.msg(f"Couldn't load {path!r} as a dataset: {e!r}")
+            return
+
+        # keep the current model, just point it at the new dataset
+        new_objective = Objective(
+            self.objective.model, dataset, use_weights=True
+        )
+        self._set_objective(new_objective)
+        self.msg(f"Loaded dataset from {path}")
+
+    def on_load_model_triggered(self):
+        path, ok = getopenfilename(
+            self, caption="Select a pickled ReflectModel"
+        )
+        if not ok or not path:
+            return
+
+        try:
+            model = persistence.load_model(path)
+        except Exception as e:
+            self.msg(f"Couldn't load {path!r} as a model: {e!r}")
+            return
+
+        # keep the current dataset, just point it at the new model
+        new_objective = Objective(model, self.objective.data, use_weights=True)
+        self._set_objective(new_objective)
+        self.msg(f"Loaded model from {path}")
+
+    def on_save_model_triggered(self):
+        path, ok = getsavefilename(
+            self, caption="Save model as", basedir="model.pkl"
+        )
+        if not ok or not path:
+            return
+
+        try:
+            persistence.save_model(self.objective.model, path)
+        except Exception as e:
+            self.msg(f"Couldn't save model to {path!r}: {e!r}")
+            return
+
+        self.msg(f"Saved model to {path}")
 
     def on_tree_selection(self, current, previous):
         component = self.structure_model.component_for_index(current)

@@ -61,3 +61,23 @@ class PlotController:
         self.sld_ax.relim()
         self.sld_ax.autoscale_view()
         self.sld_canvas.draw_idle()
+
+    def reset(self):
+        """
+        Drop the cached line artists and clear both axes. Call this
+        before update() whenever the *dataset* changes shape (a new
+        Q-array of a different length) -- e.g. loading a new data file
+        -- since update()'s set_ydata()/set_data() fast path assumes the
+        x-array is unchanged from the previous call.
+        """
+        self.reflectivity_ax.cla()
+        self.reflectivity_ax.set_xlabel(r"Q / $\AA^{-1}$")
+        self.reflectivity_ax.set_ylabel("R")
+        self.reflectivity_ax.set_yscale("log")
+        self._data_line = None
+        self._fit_line = None
+
+        self.sld_ax.cla()
+        self.sld_ax.set_xlabel(r"z / $\AA$")
+        self.sld_ax.set_ylabel(r"SLD / $10^{-6}\AA^{-2}$")
+        self._sld_line = None

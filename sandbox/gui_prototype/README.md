@@ -46,14 +46,18 @@ This prototype splits navigation from editing instead:
 - **`main.py`** — wires it all into a `QMainWindow`: structure tree
   (top-left) drives a flat parameter table (bottom-left), reflectivity
   and SLD plots in tabs (right), a Fit button running DE on a background
-  thread. Uses `e361r.txt` from `refnx.analysis.tests`, same dataset the
-  main test suite already uses.
+  thread. Starts up with `e361r.txt` from `refnx.analysis.tests` (same
+  dataset the main test suite already uses), and has a **File** menu —
+  *Load Data...* (swap in a new dataset, keep the current model), *Load
+  Model...* (swap in a pickled `ReflectModel`, keep the current
+  dataset), *Save Model...* (via `persistence.save_model`).
 
 ## What's deliberately not here
 
-Single dataset/model only (no `DataObject`/`DataStore` layer, no
-multi-dataset global fits, no MCMC, no drag-and-drop reordering, no
-lipid/spline component editors, no undo). The point was to prove out the
+Single dataset/model at a time only (no `DataObject`/`DataStore` layer,
+no multi-dataset global fits, no MCMC, no drag-and-drop reordering, no
+lipid/spline component editors, no undo, no session save/restore UI even
+though `persistence.py` supports it). The point was to prove out the
 model-splitting and threading ideas cheaply, not to rebuild the whole
 app. If this direction is worth pursuing for real, those are the next
 things to design, not to copy-paste from here.
@@ -68,14 +72,21 @@ QT_QPA_PLATFORM=offscreen python3 main.py     # headless
 
 ## Tests
 
-`test_prototype.py` (pytest + pytest-qt) covers the three things worth
-proving actually work, not just compile:
+`test_prototype.py` (pytest + pytest-qt) covers the things worth proving
+actually work, not just compile:
 
 - selecting a tree row narrows the parameter table to that component;
 - editing a value updates both the edited row *and* a row that's
   constrained to depend on it;
 - `FitController.start()` returns immediately (genuinely async) and a
-  real DE fit against `e361r.txt` reduces chi².
+  real DE fit against `e361r.txt` reduces chi²;
+- loading a dataset with a *different* number of points doesn't crash
+  the next redraw (this is what `PlotController.reset()` exists for —
+  its `update()` fast path assumes the x-array is unchanged since the
+  last call, so a genuinely different dataset needs its cached line
+  artists dropped first);
+- loading a model keeps the current dataset, and vice versa;
+- a saved model round-trips through `persistence.load_model`.
 
 ```bash
 pip install pytest-qt   # if not already installed

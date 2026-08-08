@@ -3,11 +3,14 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import sys
+from importlib import resources
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from qtpy import QtCore
+import refnx.reflect.tests
+from refnx.reflect import SLD, ReflectModel
 
+import persistence
 from main import build_demo_objective, MainWindow
 
 
@@ -91,3 +94,72 @@ def test_fit_controller_runs_async(qtbot):
     print(f"chi2 before={before:.4g} after={after:.4g}")
     assert after <= before
     assert win.fit_button.text().startswith("Fit")
+
+
+def test_load_differently_shaped_data(monkeypatch, qtbot):
+    objective = build_demo_objective()
+    win = MainWindow(objective)
+    qtbot.add_widget(win)
+
+    assert len(win.objective.data) == 99
+
+    pth = resources.files(refnx.reflect.tests)
+    other_data_path = str(pth / "smeared_theoretical.txt")
+
+    # simulate the file dialog picking a differently-shaped dataset
+    monkeypatch.setattr(
+        "main.getopenfilename", lambda *a, **k: (other_data_path, True)
+    )
+
+    win.on_load_data_triggered()
+
+    assert len(win.objective.data) != 99
+    # this is the actual thing that would previously crash: update()
+    # called again after a dataset of a different length was loaded
+    win.plot_controller.update(win.objective)
+
+    # model should be preserved (only the data changed)
+    assert win.objective.model is objective.model
+    assert win.structure_model.rowCount() == 4
+
+
+def test_load_model(qtbot, tmp_path, monkeypatch):
+    objective = build_demo_objective()
+    win = MainWindow(objective)
+    qtbot.add_widget(win)
+
+    original_data = win.objective.data
+
+    new_structure = SLD(2.07) | SLD(4.5)(20, 2) | SLD(6.36)(0, 3)
+    new_model = ReflectModel(new_structure)
+    mpath = tmp_path / "other_model.pkl"
+    persistence.save_model(new_model, mpath)
+
+    monkeypatch.setattr(
+        "main.getopenfilename", lambda *a, **k: (str(mpath), True)
+    )
+    win.on_load_model_triggered()
+
+    # unpickling always creates a new object, so compare by value, not
+    # identity, for the loaded model
+    assert win.objective.model.structure[1].sld.real.value == 4.5
+    assert len(win.objective.model.structure) == 3
+
+    # dataset should be preserved (only the model changed)
+    assert win.objective.data is original_data
+    assert win.structure_model.rowCount() == 3
+
+
+def test_save_model_round_trips(qtbot, tmp_path, monkeypatch):
+    objective = build_demo_objective()
+    win = MainWindow(objective)
+    qtbot.add_widget(win)
+
+    mpath = tmp_path / "saved.pkl"
+    monkeypatch.setattr(
+        "main.getsavefilename", lambda *a, **k: (str(mpath), True)
+    )
+    win.on_save_model_triggered()
+
+    reloaded = persistence.load_model(mpath)
+    assert reloaded.bkg.value == win.objective.model.bkg.value
