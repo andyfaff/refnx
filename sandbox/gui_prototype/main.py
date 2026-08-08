@@ -11,7 +11,6 @@ Run with:
     python3 main.py                                # normal, with a window
 """
 
-import os
 import sys
 from importlib import resources
 
@@ -160,6 +159,5 @@ def main():
 
 
 if __name__ == "__main__":
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app, win = main()
     sys.exit(app.exec())
