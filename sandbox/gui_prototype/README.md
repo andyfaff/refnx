@@ -225,10 +225,11 @@ list.
   a copy of the currently-selected dataset's model, or a bare default if
   none is selected), *Load Model...* / *Save Model...* (apply to
   whichever dataset is currently selected in the tree), *Remove Selected
-  Dataset*. **Structure** menu: *Add Component...* (choose dataset, type,
-  and position — a `QSpinBox`, not just "append"), *Remove Selected
-  Component* (also unlinks any parameter, anywhere, that depended on
-  something in the removed Component, via `unlink_dependents`).
+  Dataset*. **Structure** menu: *Add Component...* (`Ctrl++`; choose
+  dataset, container, type, and position — a `QSpinBox`, not just
+  "append"), *Remove Selected Component* (`Ctrl+-`; also unlinks any
+  parameter, anywhere, that depended on something in the removed
+  Component, via `unlink_dependents`).
   **Parameters** menu: *Link Selected Parameters* (`Ctrl+1`), *Unlink
   Selected Parameters* (`Ctrl+2`) — plain menu actions now, not buttons,
   same shortcuts as the production app — and *Link Equivalent

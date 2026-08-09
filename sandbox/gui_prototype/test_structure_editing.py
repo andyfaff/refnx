@@ -355,6 +355,20 @@ def test_nested_stack_component_not_draggable(qtbot):
     assert mime is None
 
 
+def test_structure_menu_has_add_remove_shortcuts(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    actions = {a.text(): a for a in win.menuBar().actions()}
+    structure_menu = actions["&Structure"].menu()
+    by_text = {a.text(): a for a in structure_menu.actions()}
+    assert by_text["Add Component..."].shortcut().toString() == "Ctrl++"
+    assert (
+        by_text["Remove Selected Component"].shortcut().toString() == "Ctrl+-"
+    )
+
+
 def test_add_component_dialog_lists_stacks_as_containers(qtbot):
     from dialogs import AddComponentDialog
 

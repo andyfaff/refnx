@@ -223,11 +223,13 @@ class MainWindow(QtWidgets.QMainWindow):
         structure_menu = self.menuBar().addMenu("&Structure")
 
         add_component_action = structure_menu.addAction("Add Component...")
+        add_component_action.setShortcut(QtGui.QKeySequence("Ctrl++"))
         add_component_action.triggered.connect(self.on_add_component_triggered)
 
         remove_component_action = structure_menu.addAction(
             "Remove Selected Component"
         )
+        remove_component_action.setShortcut(QtGui.QKeySequence("Ctrl+-"))
         remove_component_action.triggered.connect(
             self.on_remove_component_triggered
         )
