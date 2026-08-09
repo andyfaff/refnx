@@ -7,128 +7,165 @@ from importlib import resources
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from qtpy.QtCore import Qt
+
 import refnx.reflect.tests
 from refnx.reflect import SLD, ReflectModel
+from refnx.analysis import Objective
 
 import persistence
-from main import build_demo_objective, MainWindow
+from main import build_demo_datastore, MainWindow
 
 
-def test_tree_selection_filters_table(qtbot):
-    objective = build_demo_objective()
-    win = MainWindow(objective)
+def _chisqr(data_object):
+    return Objective(data_object.model, data_object.dataset).chisqr()
+
+
+def test_multiple_datasets_all_displayed(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    # whole structure to start with
-    assert win.parameter_model.rowCount() == 20
+    # two datasets loaded at startup, both shown in the tree...
+    assert win.tree_model.rowCount() == 2
 
-    # select the second component (sio2) -- should narrow to just its
-    # own parameters (thick, sld, isld, rough, vfsolv = 5)
-    idx = win.structure_model.index(1, 0)
-    win.tree_view.setCurrentIndex(idx)
-    assert win.parameter_model.rowCount() == 5
-    names = [
-        win.parameter_model.data(win.parameter_model.index(r, 0))
-        for r in range(5)
-    ]
-    print("selected component parameter names:", names)
+    # ...and every one of their parameters visible in the table at once,
+    # not just whichever is currently selected
+    dataset_names_in_table = {name for name, _ in win.parameter_model._rows}
+    assert dataset_names_in_table == set(datastore.names)
+    assert win.parameter_model.rowCount() == 48  # 24 params x 2 datasets
 
 
-def test_editing_updates_plot_and_dependents(qtbot):
-    objective = build_demo_objective()
-    win = MainWindow(objective)
+def test_tree_selection_highlights_without_hiding_other_rows(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    # link two parameters so we can prove dependency notification works
-    model = objective.model
-    thick_param = model.structure[-2].thick
-    sld_param = model.structure[-2].sld.real
-    sld_param.constraint = thick_param  # sld now depends on thick
+    total_before = win.parameter_model.rowCount()
 
-    win.parameter_model.set_parameters(model.structure.parameters.flattened())
+    # select the second dataset's third component (polymer)
+    e365_index = win.tree_model.index(1, 0)
+    polymer_index = win.tree_model.index(2, 0, e365_index)
+    win.tree_view.setCurrentIndex(polymer_index)
 
-    row_of_thick = win.parameter_model._row_of[thick_param]
-    row_of_sld = win.parameter_model._row_of[sld_param]
+    # nothing should have been hidden/filtered out of the table
+    assert win.parameter_model.rowCount() == total_before
 
+    # but the table's selection should now be exactly that component's
+    # rows, and they should all belong to e365r
+    selected_rows = sorted({i.row() for i in win.table_view.selectedIndexes()})
+    assert len(selected_rows) == 5  # thick, sld, isld, rough, vfsolv
+    for r in selected_rows:
+        name, p = win.parameter_model._rows[r]
+        assert name == "e365r"
+
+
+def test_link_parameters_across_datasets(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    thick_e361 = datastore["e361r"].model.structure[-2].thick
+    thick_e365 = datastore["e365r"].model.structure[-2].thick
+    row_361 = win.parameter_model._row_of[thick_e361]
+    row_365 = win.parameter_model._row_of[thick_e365]
+
+    win.parameter_model.link([row_361, row_365])
+
+    assert thick_e365.constraint is thick_e361
+
+    # editing the master should propagate to the linked row's dataChanged,
+    # even though it lives in a different dataset
     seen_rows = []
     win.parameter_model.dataChanged.connect(
         lambda tl, br, roles: seen_rows.append(tl.row())
     )
-
     value_col = win.parameter_model.COLUMNS.index("value")
-    idx = win.parameter_model.index(row_of_thick, value_col)
-    win.parameter_model.setData(idx, "250.0")
+    idx = win.parameter_model.index(row_361, value_col)
+    win.parameter_model.setData(idx, "260.0")
 
-    assert thick_param.value == 250.0
-    assert row_of_thick in seen_rows
-    assert row_of_sld in seen_rows, "dependent row was not notified"
-    print("dependency notification worked: rows touched =", seen_rows)
+    assert thick_e361.value == 260.0
+    assert (
+        row_365 in seen_rows
+    ), "linked row in the OTHER dataset wasn't notified"
 
-    sld_param.constraint = None  # undo for cleanliness
+    win.parameter_model.unlink([row_365])
+    assert thick_e365.constraint is None
 
 
-def test_fit_controller_runs_async(qtbot):
-    objective = build_demo_objective()
-    win = MainWindow(objective)
+def test_fit_selection_controls_which_datasets_are_fitted(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    before = objective.chisqr()
-
-    progress_calls = []
-    win.fit_controller.progress.connect(
-        lambda chi2, it: progress_calls.append((chi2, it))
+    assert {do.name for do in datastore.fitted_objects()} == set(
+        datastore.names
     )
+
+    # uncheck e365r via the tree model directly (mirrors clicking its
+    # checkbox in the tree)
+    e365_index = win.tree_model.index(1, 0)
+    win.tree_model.setData(
+        e365_index,
+        Qt.CheckState.Unchecked.value,
+        Qt.ItemDataRole.CheckStateRole,
+    )
+    assert {do.name for do in datastore.fitted_objects()} == {"e361r"}
+
+
+def test_fit_controller_runs_global_objective_async(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    before = sum(_chisqr(do) for do in datastore.fitted_objects())
 
     with qtbot.waitSignal(
         win.fit_controller.finished, timeout=30000
     ) as blocker:
         win.on_fit_clicked()
-        # controller should be genuinely async: control returns to us
-        # immediately, the fit hasn't necessarily finished yet.
         assert win.fit_button.text() == "Abort"
 
     exc = blocker.args[0]
     assert exc is None, f"fit raised: {exc!r}"
 
-    after = objective.chisqr()
-    print(f"chi2 before={before:.4g} after={after:.4g}")
+    after = sum(_chisqr(do) for do in datastore.fitted_objects())
+    print(f"total chi2 before={before:.4g} after={after:.4g}")
     assert after <= before
     assert win.fit_button.text().startswith("Fit")
 
 
-def test_load_differently_shaped_data(monkeypatch, qtbot):
-    objective = build_demo_objective()
-    win = MainWindow(objective)
+def test_load_data_adds_rather_than_replaces(monkeypatch, qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    assert len(win.objective.data) == 99
+    assert len(win.datastore) == 2
 
     pth = resources.files(refnx.reflect.tests)
     other_data_path = str(pth / "smeared_theoretical.txt")
 
-    # simulate the file dialog picking a differently-shaped dataset
     monkeypatch.setattr(
-        "main.getopenfilename", lambda *a, **k: (other_data_path, True)
+        "main.getopenfilenames", lambda *a, **k: ([other_data_path], True)
     )
-
     win.on_load_data_triggered()
 
-    assert len(win.objective.data) != 99
+    assert len(win.datastore) == 3
     # this is the actual thing that would previously crash: update()
     # called again after a dataset of a different length was loaded
-    win.plot_controller.update(win.objective)
-
-    # model should be preserved (only the data changed)
-    assert win.objective.model is objective.model
-    assert win.structure_model.rowCount() == 4
+    win.plot_controller.update(win.datastore)
+    assert win.tree_model.rowCount() == 3
 
 
-def test_load_model(qtbot, tmp_path, monkeypatch):
-    objective = build_demo_objective()
-    win = MainWindow(objective)
+def test_load_model_applies_only_to_selected_dataset(
+    qtbot, tmp_path, monkeypatch
+):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    original_data = win.objective.data
+    e365_index = win.tree_model.index(1, 0)
+    win.tree_view.setCurrentIndex(e365_index)
 
     new_structure = SLD(2.07) | SLD(4.5)(20, 2) | SLD(6.36)(0, 3)
     new_model = ReflectModel(new_structure)
@@ -140,20 +177,20 @@ def test_load_model(qtbot, tmp_path, monkeypatch):
     )
     win.on_load_model_triggered()
 
-    # unpickling always creates a new object, so compare by value, not
-    # identity, for the loaded model
-    assert win.objective.model.structure[1].sld.real.value == 4.5
-    assert len(win.objective.model.structure) == 3
-
-    # dataset should be preserved (only the model changed)
-    assert win.objective.data is original_data
-    assert win.structure_model.rowCount() == 3
+    # e365r got the new model...
+    assert datastore["e365r"].model.structure[1].sld.real.value == 4.5
+    assert len(datastore["e365r"].model.structure) == 3
+    # ...e361r's model is untouched
+    assert len(datastore["e361r"].model.structure) == 4
 
 
 def test_save_model_round_trips(qtbot, tmp_path, monkeypatch):
-    objective = build_demo_objective()
-    win = MainWindow(objective)
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
     qtbot.add_widget(win)
+
+    e361_index = win.tree_model.index(0, 0)
+    win.tree_view.setCurrentIndex(e361_index)
 
     mpath = tmp_path / "saved.pkl"
     monkeypatch.setattr(
@@ -162,4 +199,19 @@ def test_save_model_round_trips(qtbot, tmp_path, monkeypatch):
     win.on_save_model_triggered()
 
     reloaded = persistence.load_model(mpath)
-    assert reloaded.bkg.value == win.objective.model.bkg.value
+    assert reloaded.bkg.value == datastore["e361r"].model.bkg.value
+
+
+def test_remove_dataset(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    e365_index = win.tree_model.index(1, 0)
+    win.tree_view.setCurrentIndex(e365_index)
+    win.on_remove_dataset_triggered()
+
+    assert len(datastore) == 1
+    assert "e365r" not in datastore
+    assert win.tree_model.rowCount() == 1
+    assert win.parameter_model.rowCount() == 24

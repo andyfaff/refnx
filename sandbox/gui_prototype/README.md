@@ -1,10 +1,11 @@
 # Motofit GUI architecture prototype
 
 A from-scratch sketch of an alternative to `refnx.reflect._app`'s GUI
-architecture, written during a review of the existing app. **Not a
-replacement for Motofit** — it's a standalone, runnable demonstration of
-a few specific structural changes, scoped to one dataset/model so the
-ideas are easy to see without wading through the full app.
+architecture, written during a review of the existing app, then
+generalized to multi-dataset co-refinement after early feedback showed
+the single-dataset version couldn't support cross-dataset parameter
+linking. **Not a replacement for Motofit** — it's a standalone, runnable
+demonstration of a few specific structural changes.
 
 ## What this replaces, and why
 
@@ -19,23 +20,48 @@ separately in `unlink_dependent_parameters`, `link_action`, and the
 params-slider handler (and missing entirely in one of those three until
 this review caught it).
 
-This prototype splits navigation from editing instead:
+This prototype splits navigation from editing instead — and, crucially,
+the parameter table shows *every* parameter from *every* loaded dataset
+at once, all the time. That wasn't the first design: the first version
+filtered the table down to whatever was selected in the tree, which
+turned out to be a real problem, not just a cosmetic tradeoff — you
+can't multi-select two parameters to link them if they're never visible
+at the same time, and linking parameters *across* datasets is a core
+co-refinement workflow. So the table doesn't filter; the tree is purely
+for navigation, structural editing, and picking which datasets to
+overlay-highlight in the table.
 
-- **`models.py`** — `StructureTreeModel` (pure navigation: one generic
-  node class, recurses into `Stack`s automatically, no parameter data)
-  and `ParameterTableModel` (flat, one row per `Parameter`, built by
-  calling `.parameters.flattened()` on whatever's selected). Dependency
-  propagation lives in exactly one place:
-  `ParameterTableModel._rows_depending_on`.
+- **`datastore.py`** — `DataObject` (name + dataset + model + whether
+  it's included in the next fit) and `DataStore` (an ordered collection
+  of them). The thing the single-dataset version of this prototype was
+  missing entirely.
+- **`models.py`** — `DataStoreTreeModel` (pure navigation: one generic
+  node class per row, `DataObject` at the top level with a checkbox
+  controlling `in_fit`, `Component` rows nested underneath, recursing
+  into `Stack`s automatically) and `ParameterTableModel` (flat, one row
+  per `Parameter`, across *every* `DataObject` in the store, with a
+  `Dataset` column so you can tell which one each row belongs to).
+  Dependency propagation, including across datasets, lives in exactly
+  one place: `ParameterTableModel._rows_depending_on` — it only ever
+  looks at `Parameter` identity, never which dataset a parameter came
+  from, so cross-dataset linking falls out of the flat-table design for
+  free rather than needing special-case code. `link()`/`unlink()`
+  constrain a set of selected rows to the first one.
 - **`controllers.py`** — `FitController`, a reusable `QObject` wrapping
   `CurveFitter` on a background `QThread`. Properly async
   (`started`/`progress`/`finished` signals) — no nested `QEventLoop`,
   which the production retrofit needed only to preserve old synchronous
-  callers.
-- **`plotting.py`** — `PlotController`, redraws reflectivity/SLD from an
-  `Objective`. Doesn't know about tree models or datastores, unlike
+  callers. Works identically whether it's handed a plain `Objective`
+  (one dataset) or a `GlobalObjective` (several) — `CurveFitter` doesn't
+  care, so the controller doesn't need to either.
+- **`plotting.py`** — `PlotController`, redraws reflectivity/SLD from a
+  whole `DataStore`, overlaying every dataset with a shared legend.
+  Doesn't know about tree models, unlike
   `MotofitMainWindow.redraw_data_object_graphs` today. Uses
-  `draw_idle()`, not `draw()`.
+  `draw_idle()`, not `draw()`. Always clears and redraws from scratch
+  rather than caching line artists, because a datastore's shape (how
+  many datasets, how many points each) can change between calls in a
+  way a single fixed dataset never did.
 - **`persistence.py`** — model state and session state (console text,
   window geometry) saved independently, so a pickling failure in one
   can't take down the other. Motivated by a real, reproducible bug: an
@@ -43,24 +69,31 @@ This prototype splits navigation from editing instead:
   `PchipInterpolator` holds a stale module reference, taking the console
   history down with it even though that has nothing to do with the
   spline.
-- **`main.py`** — wires it all into a `QMainWindow`: structure tree
-  (top-left) drives a flat parameter table (bottom-left), reflectivity
-  and SLD plots in tabs (right), a Fit button running DE on a background
-  thread. Starts up with `e361r.txt` from `refnx.analysis.tests` (same
-  dataset the main test suite already uses), and has a **File** menu —
-  *Load Data...* (swap in a new dataset, keep the current model), *Load
-  Model...* (swap in a pickled `ReflectModel`, keep the current
-  dataset), *Save Model...* (via `persistence.save_model`).
+- **`main.py`** — wires it all into a `QMainWindow`: dataset tree
+  (top-left, checkboxes control fit inclusion) drives highlighting in
+  the parameter table (bottom-left, always shows everything — select
+  rows across datasets and hit **Link Selected**), reflectivity and SLD
+  plots overlaying every dataset (right), a Fit button that builds a
+  `GlobalObjective` from whichever datasets are checked and runs DE on a
+  background thread. Starts up with two datasets (`e361r.txt` and
+  `e365r.txt` from `refnx.analysis.tests`) so multi-dataset behaviour is
+  visible immediately. **File** menu: *Load Data...* (adds one or more
+  new datasets — doesn't replace what's already loaded — each starting
+  from a copy of the currently-selected dataset's model, or a bare
+  default if none is selected), *Load Model...* / *Save Model...*
+  (apply to whichever dataset is currently selected in the tree),
+  *Remove Selected Dataset*.
 
 ## What's deliberately not here
 
-Single dataset/model at a time only (no `DataObject`/`DataStore` layer,
-no multi-dataset global fits, no MCMC, no drag-and-drop reordering, no
-lipid/spline component editors, no undo, no session save/restore UI even
-though `persistence.py` supports it). The point was to prove out the
-model-splitting and threading ideas cheaply, not to rebuild the whole
-app. If this direction is worth pursuing for real, those are the next
-things to design, not to copy-paste from here.
+No MCMC, no drag-and-drop layer reordering, no lipid/spline component
+editors, no undo, no session save/restore UI even though
+`persistence.py` supports it, no per-dataset visibility toggle separate
+from fit-inclusion (checking a dataset both plots it and fits it — the
+production app treats "visible" and "currently fitting" as separate
+concerns, which is a reasonable next thing to add here if it matters).
+The point was to prove out the model-splitting, multi-dataset, and
+threading ideas cheaply, not to rebuild the whole app.
 
 ## Running it
 
@@ -75,18 +108,25 @@ QT_QPA_PLATFORM=offscreen python3 main.py     # headless
 `test_prototype.py` (pytest + pytest-qt) covers the things worth proving
 actually work, not just compile:
 
-- selecting a tree row narrows the parameter table to that component;
-- editing a value updates both the edited row *and* a row that's
-  constrained to depend on it;
-- `FitController.start()` returns immediately (genuinely async) and a
-  real DE fit against `e361r.txt` reduces chi²;
-- loading a dataset with a *different* number of points doesn't crash
-  the next redraw (this is what `PlotController.reset()` exists for —
-  its `update()` fast path assumes the x-array is unchanged since the
-  last call, so a genuinely different dataset needs its cached line
-  artists dropped first);
-- loading a model keeps the current dataset, and vice versa;
-- a saved model round-trips through `persistence.load_model`.
+- both startup datasets are loaded and *all* of their parameters are in
+  the table at once, not just one dataset's;
+- selecting a tree row highlights (scrolls to/selects) the right table
+  rows without hiding any others — proving the "always show everything"
+  design actually holds;
+- linking two parameters *across* datasets works, including dependency
+  propagation on edit;
+- unchecking a dataset in the tree removes it from
+  `DataStore.fitted_objects()`;
+- `FitController` runs a `GlobalObjective` built from the checked
+  datasets asynchronously, and total chi² drops;
+- Load Data *adds* a dataset rather than replacing the store, and
+  survives a dataset with a different number of points (the actual bug
+  this exposed: `PlotController` used to cache line artists and update
+  them in place, which breaks the moment the x-array's shape changes —
+  now it always redraws from scratch);
+- Load Model / Save Model apply only to the selected dataset, leaving
+  others untouched;
+- removing a dataset actually removes it from the tree and table.
 
 ```bash
 pip install pytest-qt   # if not already installed

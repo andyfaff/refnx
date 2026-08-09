@@ -1,13 +1,23 @@
 """
 PlotController: owns the reflectivity + SLD matplotlib canvases and
-redraws them from an Objective. Knows nothing about tree models,
-datastores, or anything else in the GUI -- it's handed an objective and
-draws it. Contrast with the production app, where
+redraws them from a DataStore. Knows nothing about tree models or the
+rest of the GUI -- it's handed the datastore and draws every dataset in
+it. Contrast with the production app, where
 MotofitMainWindow.redraw_data_object_graphs reaches directly into
 self.treeModel.datastore.
 
 Uses draw_idle(), not draw() -- see the slider-performance fix in the
 production app for why.
+
+Always clears and redraws both axes from scratch on every update() call,
+rather than caching line artists and updating their data in place. That
+caching (kept from the single-dataset version of this prototype) is a
+real optimisation when you're redrawing the *same* dataset repeatedly
+(e.g. dragging a slider), but a datastore's contents can change shape
+between calls -- a new dataset added, one removed, a differently-sized
+file loaded -- and full-redraw is simpler and correct in all those
+cases. At this scale (a handful of datasets, no per-frame dragging) the
+extra draw cost doesn't matter.
 """
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -19,65 +29,55 @@ class PlotController:
         self.reflectivity_fig = Figure()
         self.reflectivity_canvas = FigureCanvas(self.reflectivity_fig)
         self.reflectivity_ax = self.reflectivity_fig.add_subplot(111)
-        self.reflectivity_ax.set_xlabel(r"Q / $\AA^{-1}$")
-        self.reflectivity_ax.set_ylabel("R")
-        self.reflectivity_ax.set_yscale("log")
-        self._data_line = None
-        self._fit_line = None
 
         self.sld_fig = Figure()
         self.sld_canvas = FigureCanvas(self.sld_fig)
         self.sld_ax = self.sld_fig.add_subplot(111)
+
+        self._reset_axes()
+
+    def _reset_axes(self):
+        self.reflectivity_ax.cla()
+        self.reflectivity_ax.set_xlabel(r"Q / $\AA^{-1}$")
+        self.reflectivity_ax.set_ylabel("R")
+        self.reflectivity_ax.set_yscale("log")
+
+        self.sld_ax.cla()
         self.sld_ax.set_xlabel(r"z / $\AA$")
         self.sld_ax.set_ylabel(r"SLD / $10^{-6}\AA^{-2}$")
-        self._sld_line = None
 
-    def update(self, objective):
-        dataset = objective.data
-        x, y = dataset.x, dataset.y
+    def update(self, datastore):
+        self._reset_axes()
 
-        if self._data_line is None:
-            (self._data_line,) = self.reflectivity_ax.plot(
-                x, y, "o", ms=3, label="data"
+        for data_object in datastore:
+            dataset = data_object.dataset
+            model = data_object.model
+            x, y = dataset.x, dataset.y
+
+            (line,) = self.reflectivity_ax.plot(
+                x, y, "o", ms=3, label=f"{data_object.name} (data)"
             )
-            (self._fit_line,) = self.reflectivity_ax.plot(
-                x, objective.model(x), "-", label="fit"
+            self.reflectivity_ax.plot(
+                x,
+                model(x),
+                "-",
+                color=line.get_color(),
+                label=f"{data_object.name} (fit)",
             )
-            self.reflectivity_ax.legend()
-        else:
-            self._fit_line.set_ydata(objective.model(x))
+
+            z, sld = model.structure.sld_profile()
+            self.sld_ax.plot(
+                z, sld, color=line.get_color(), label=data_object.name
+            )
+
+        if len(datastore):
+            self.reflectivity_ax.legend(fontsize="small")
+            self.sld_ax.legend(fontsize="small")
 
         self.reflectivity_ax.relim()
         self.reflectivity_ax.autoscale_view()
         self.reflectivity_canvas.draw_idle()
 
-        structure = objective.model.structure
-        z, sld = structure.sld_profile()
-        if self._sld_line is None:
-            (self._sld_line,) = self.sld_ax.plot(z, sld)
-        else:
-            self._sld_line.set_data(z, sld)
-
         self.sld_ax.relim()
         self.sld_ax.autoscale_view()
         self.sld_canvas.draw_idle()
-
-    def reset(self):
-        """
-        Drop the cached line artists and clear both axes. Call this
-        before update() whenever the *dataset* changes shape (a new
-        Q-array of a different length) -- e.g. loading a new data file
-        -- since update()'s set_ydata()/set_data() fast path assumes the
-        x-array is unchanged from the previous call.
-        """
-        self.reflectivity_ax.cla()
-        self.reflectivity_ax.set_xlabel(r"Q / $\AA^{-1}$")
-        self.reflectivity_ax.set_ylabel("R")
-        self.reflectivity_ax.set_yscale("log")
-        self._data_line = None
-        self._fit_line = None
-
-        self.sld_ax.cla()
-        self.sld_ax.set_xlabel(r"z / $\AA$")
-        self.sld_ax.set_ylabel(r"SLD / $10^{-6}\AA^{-2}$")
-        self._sld_line = None
