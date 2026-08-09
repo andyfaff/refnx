@@ -49,6 +49,7 @@ from dialogs import (
     DatasetMultiSelectDialog,
     default_component,
 )
+from delegates import SelectAllDelegate
 import persistence
 
 
@@ -145,6 +146,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table_view = QtWidgets.QTreeView()
         self.table_view.setModel(self.parameter_model)
         self.table_view.header().setStretchLastSection(True)
+        # select-all on entering edit mode -- typing immediately
+        # replaces the whole value instead of inserting into whatever
+        # got (inconsistently, platform-dependently) selected around
+        # the click, which is what made precise/small values like
+        # 2.123e-5 hard to enter cleanly
+        self.table_view.setItemDelegate(SelectAllDelegate(self.table_view))
         self.table_view.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )

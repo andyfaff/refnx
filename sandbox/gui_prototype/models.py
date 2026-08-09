@@ -732,9 +732,9 @@ class ParameterTableModel(QtCore.QAbstractItemModel):
             if col == "stderr":
                 return f"{p.stderr:.3g}" if p.stderr is not None else ""
             if col == "lb":
-                return p.bounds.lb
+                return f"{p.bounds.lb:.6g}"
             if col == "ub":
-                return p.bounds.ub
+                return f"{p.bounds.ub:.6g}"
             if col == "constraint":
                 return repr(p.constraint) if p.constraint is not None else ""
 

@@ -92,6 +92,18 @@ list.
   or nudging a bound doesn't itself invalidate an already-run fit, so
   neither of those touches `stderr`.
 
+  `lb`/`ub` are formatted as strings (`f"{...:.6g}"`), same as `value`
+  already was — not just for display consistency, but because it fixes
+  a real editing bug: Qt's default delegate inspects the *type* of a
+  cell's `EditRole` data to decide what editor to create, and a raw
+  Python `float` gets a `QDoubleSpinBox` (2 decimal places, no
+  scientific-notation input at all) instead of a plain `QLineEdit`.
+  `lb`/`ub` used to return `p.bounds.lb`/`.ub` directly, so typing a
+  small bound like `2.123e-5` silently got truncated to `2.12` the
+  moment the spinbox's default two-decimal-place validator saw the
+  `e-5` it couldn't parse. Formatting as a string keeps every editable
+  numeric cell on the same `QLineEdit` path `value` was already using.
+
   `_boundary_slab_hidden_parameters(structure)` is what keeps
   thickness/iSLD/roughness/volfrac solvent for the fronting medium, and
   thickness/iSLD/volfrac solvent for the backing medium, out of
@@ -218,6 +230,13 @@ list.
   that tree is generic (it just flattens whatever `.parameters` a
   Component happens to expose), no bespoke editing UI is needed once the
   object exists, only a bespoke *constructor* for the ones that need it.
+- **`delegates.py`** — `SelectAllDelegate`, installed as the parameter
+  tree's item delegate. Selects the existing text the moment a cell
+  starts editing, so typing immediately replaces the whole value
+  instead of merging with whatever was (inconsistently, in a way that
+  depends on platform double-click word-boundary behaviour) selected
+  around the click — motivated by small, precise values like `2.123e-5`
+  being hard to enter cleanly into the Value box.
 - **`main.py`** — wires it all into a `QMainWindow`: dataset tree
   (top-left, checkboxes control fit inclusion, drag Components to
   reorder them) drives expanding and highlighting rows in the parameter
@@ -462,6 +481,21 @@ actually work, not just compile:
 - the **Parameters** menu has all three actions with the right
   `Ctrl+1`/`Ctrl+2`/`Ctrl+3` shortcuts, and Link/Unlink Selected still
   work the same as before now that they're actions instead of buttons.
+
+`test_delegates.py` covers the small-value-entry fix:
+
+- `SelectAllDelegate` selects a cell's existing text the moment editing
+  starts;
+- typing a small value like `2.123e-6` immediately after opening the
+  editor (no manual select-all first) replaces the old text cleanly
+  and commits correctly;
+- the `lb`/`ub` cells use a plain `QLineEdit`, not a `QDoubleSpinBox` —
+  the regression test for the actual bug: Qt's default delegate
+  creates a spinbox (2 decimal places, no scientific-notation support)
+  whenever a cell's `EditRole` data is a raw `float` rather than a
+  string, which silently truncated a typed bound like `2.123e-5` down
+  to `2.12`;
+- `data()` for `lb`/`ub` returns a formatted string, not a raw float.
 
 ```bash
 pip install pytest-qt   # if not already installed
