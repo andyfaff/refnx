@@ -43,7 +43,7 @@ def test_add_component_via_dialog(qtbot, monkeypatch):
 
     do = datastore["e361r"]
     n_before = len(do.model.structure)
-    rows_before = win.parameter_model.rowCount()
+    rows_before = win.parameter_model.leaf_count()
 
     monkeypatch.setattr(
         "main.AddComponentDialog",
@@ -56,7 +56,7 @@ def test_add_component_via_dialog(qtbot, monkeypatch):
     # this also proves the table refreshed automatically via
     # tree_model.modelReset -> on_structure_changed, with no explicit
     # refresh call in the handler
-    assert win.parameter_model.rowCount() == rows_before + 5
+    assert win.parameter_model.leaf_count() == rows_before + 5
 
 
 def test_add_component_rejects_invalid_boundary(qtbot, monkeypatch):
@@ -128,7 +128,7 @@ def test_drag_drop_reorder_refreshes_table_and_plot(qtbot):
 
     do = datastore["e361r"]
     original = list(do.model.structure)
-    rows_before = win.parameter_model.rowCount()
+    rows_before = win.parameter_model.leaf_count()
 
     do_index = win.tree_model.index(0, 0)
     source_index = win.tree_model.index(2, 0, do_index)  # polymer
@@ -147,7 +147,7 @@ def test_drag_drop_reorder_refreshes_table_and_plot(qtbot):
     ]
     # same number of parameters, just reordered -- but this proves
     # on_structure_changed fired and rebuilt the table without crashing
-    assert win.parameter_model.rowCount() == rows_before
+    assert win.parameter_model.leaf_count() == rows_before
 
 
 def test_drag_drop_rejects_boundary_violation(qtbot):

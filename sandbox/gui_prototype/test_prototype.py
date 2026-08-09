@@ -37,7 +37,7 @@ def test_multiple_datasets_all_displayed(qtbot):
     assert dataset_names_in_table == set(datastore.names)
     # 24 params x 2 datasets, minus 7 hidden per dataset (thick/isld/
     # rough/vfsolv for the first Slab, thick/isld/vfsolv for the last)
-    assert win.parameter_model.rowCount() == 34
+    assert win.parameter_model.leaf_count() == 34
 
 
 def test_boundary_slab_parameters_hidden(qtbot):
@@ -140,17 +140,17 @@ def test_lipid_leaflet_reverse_monolayer_exposed_and_editable(qtbot):
     win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    rows = [
-        r
-        for r, (name, obj) in enumerate(win.parameter_model._rows)
+    props = [
+        obj
+        for name, obj in win.parameter_model._rows
         if name == "e361r"
         and getattr(obj, "attr_name", None) == "reverse_monolayer"
     ]
-    assert len(rows) == 1
-    row = rows[0]
+    assert len(props) == 1
+    prop = props[0]
 
     value_col = win.parameter_model.COLUMNS.index("value")
-    idx = win.parameter_model.index(row, value_col)
+    idx = win.parameter_model.index_for(prop, value_col)
 
     assert (
         win.parameter_model.data(idx, Qt.ItemDataRole.CheckStateRole)
@@ -200,21 +200,84 @@ def test_component_property_rows_ignored_by_link_and_auto_limits(qtbot):
     win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    property_row = next(
-        r
-        for r, (name, obj) in enumerate(win.parameter_model._rows)
+    property_obj = next(
+        obj
+        for name, obj in win.parameter_model._rows
         if name == "e361r"
         and getattr(obj, "attr_name", None) == "reverse_monolayer"
     )
-    parameter_row = next(
-        r
-        for r, (name, obj) in enumerate(win.parameter_model._rows)
+    parameter_obj = next(
+        obj
+        for name, obj in win.parameter_model._rows
         if name == "e361r" and hasattr(obj, "vary")
     )
+    property_index = win.parameter_model.index_for(property_obj)
+    parameter_index = win.parameter_model.index_for(parameter_obj)
 
     # should not raise, and the property row is simply skipped
-    win.parameter_model.link([property_row, parameter_row])
+    win.parameter_model.link([property_index, parameter_index])
     win.parameter_model.auto_limits()
+
+
+def test_parameters_grouped_by_component(qtbot):
+    # the point of the tree restructuring: each top-level Component
+    # gets its own collapsible group row, with only *its own*
+    # parameters as children -- not one large flat list mixing
+    # everything together.
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do_index = win.parameter_model.index(0, 0)  # e361r dataset row
+    structure = datastore["e361r"].model.structure
+
+    # children: one "Model" group, then one group per top-level
+    # Component, in Structure order
+    assert win.parameter_model.rowCount(do_index) == 1 + len(structure)
+
+    model_group_index = win.parameter_model.index(0, 0, do_index)
+    assert win.parameter_model.data(model_group_index) == "Model"
+    assert win.parameter_model.rowCount(model_group_index) == 4
+
+    # si (fronting, boundary-hidden down to just `sld`), sio2 and
+    # polymer (untouched middle Slabs, 5 params each), d2o (backing,
+    # hidden down to `sld` + `rough`)
+    expected_counts = [1, 5, 5, 2]
+    for i, (component, count) in enumerate(zip(structure, expected_counts)):
+        comp_index = win.parameter_model.index(i + 1, 0, do_index)
+        assert comp_index.internalPointer().obj is component
+        assert win.parameter_model.rowCount(comp_index) == count
+
+
+def test_stack_group_nests_its_children_separately(qtbot):
+    # a Stack's own group holds only `repeats` -- its children's
+    # parameters don't get flattened into the Stack's own group, they
+    # get their own nested group, so expand/collapse can tell a
+    # Stack's own parameter apart from what's inside it.
+    from refnx.reflect import SLD, Stack
+
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    inner = SLD(4.0)(5, 1)
+    stack = Stack([inner], name="stack", repeats=2)
+    do.model.structure.insert(1, stack)  # a legal, middle position
+
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do_index = win.parameter_model.index(0, 0)
+    stack_group_index = win.parameter_model.index(2, 0, do_index)
+    assert win.parameter_model.data(stack_group_index) == "stack"
+    # 2 children: the `repeats` leaf, plus the inner Slab's own nested
+    # group -- not the inner Slab's 5 parameters flattened in here too
+    assert win.parameter_model.rowCount(stack_group_index) == 2
+
+    repeats_index = win.parameter_model.index(0, 0, stack_group_index)
+    assert repeats_index.internalPointer().obj is stack.repeats
+
+    inner_group_index = win.parameter_model.index(1, 0, stack_group_index)
+    assert inner_group_index.internalPointer().obj is inner
+    assert win.parameter_model.rowCount(inner_group_index) == 5
 
 
 def test_tree_selection_highlights_without_hiding_other_rows(qtbot):
@@ -222,7 +285,7 @@ def test_tree_selection_highlights_without_hiding_other_rows(qtbot):
     win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    total_before = win.parameter_model.rowCount()
+    total_before = win.parameter_model.leaf_count()
 
     # select the second dataset's third component (polymer)
     e365_index = win.tree_model.index(1, 0)
@@ -230,15 +293,17 @@ def test_tree_selection_highlights_without_hiding_other_rows(qtbot):
     win.tree_view.setCurrentIndex(polymer_index)
 
     # nothing should have been hidden/filtered out of the table
-    assert win.parameter_model.rowCount() == total_before
+    assert win.parameter_model.leaf_count() == total_before
 
     # but the table's selection should now be exactly that component's
     # rows, and they should all belong to e365r
-    selected_rows = sorted({i.row() for i in win.table_view.selectedIndexes()})
-    assert len(selected_rows) == 5  # thick, sld, isld, rough, vfsolv
-    for r in selected_rows:
-        name, p = win.parameter_model._rows[r]
-        assert name == "e365r"
+    selected_nodes = {
+        idx.sibling(idx.row(), 0).internalPointer()
+        for idx in win.table_view.selectedIndexes()
+    }
+    assert len(selected_nodes) == 5  # thick, sld, isld, rough, vfsolv
+    for node in selected_nodes:
+        assert node.dataset_name == "e365r"
 
 
 def test_link_parameters_across_datasets(qtbot):
@@ -248,29 +313,29 @@ def test_link_parameters_across_datasets(qtbot):
 
     thick_e361 = datastore["e361r"].model.structure[-2].thick
     thick_e365 = datastore["e365r"].model.structure[-2].thick
-    row_361 = win.parameter_model._row_of[thick_e361]
-    row_365 = win.parameter_model._row_of[thick_e365]
+    idx_361 = win.parameter_model._row_of[thick_e361]
+    idx_365 = win.parameter_model._row_of[thick_e365]
 
-    win.parameter_model.link([row_361, row_365])
+    win.parameter_model.link([idx_361, idx_365])
 
     assert thick_e365.constraint is thick_e361
 
     # editing the master should propagate to the linked row's dataChanged,
     # even though it lives in a different dataset
-    seen_rows = []
+    seen_nodes = []
     win.parameter_model.dataChanged.connect(
-        lambda tl, br, roles: seen_rows.append(tl.row())
+        lambda tl, br, roles: seen_nodes.append(tl.internalPointer())
     )
     value_col = win.parameter_model.COLUMNS.index("value")
-    idx = win.parameter_model.index(row_361, value_col)
-    win.parameter_model.setData(idx, "260.0")
+    value_idx = win.parameter_model.index_for(thick_e361, value_col)
+    win.parameter_model.setData(value_idx, "260.0")
 
     assert thick_e361.value == 260.0
     assert (
-        row_365 in seen_rows
+        idx_365.internalPointer() in seen_nodes
     ), "linked row in the OTHER dataset wasn't notified"
 
-    win.parameter_model.unlink([row_365])
+    win.parameter_model.unlink([idx_365])
     assert thick_e365.constraint is None
 
 
@@ -348,7 +413,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
     win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    assert win.parameter_model.rowCount() == 34
+    assert win.parameter_model.leaf_count() == 34
 
     e365_index = win.tree_model.index(1, 0)
     win.tree_model.setData(
@@ -358,7 +423,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
     )
 
     # e365r's rows should be gone, e361r's should still be there
-    assert win.parameter_model.rowCount() == 17
+    assert win.parameter_model.leaf_count() == 17
     assert {name for name, _ in win.parameter_model._rows} == {"e361r"}
 
     # a constraint made while it was checked should survive being
@@ -374,7 +439,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
         Qt.CheckState.Checked.value,
         Qt.ItemDataRole.CheckStateRole,
     )
-    assert win.parameter_model.rowCount() == 34
+    assert win.parameter_model.leaf_count() == 34
     assert thick_e365.constraint is thick_e361
 
 
@@ -653,4 +718,4 @@ def test_remove_dataset(qtbot):
     assert len(datastore) == 1
     assert "e365r" not in datastore
     assert win.tree_model.rowCount() == 1
-    assert win.parameter_model.rowCount() == 17
+    assert win.parameter_model.leaf_count() == 17

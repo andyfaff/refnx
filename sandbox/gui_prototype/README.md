@@ -21,21 +21,32 @@ params-slider handler (and missing entirely in one of those three until
 this review caught it).
 
 This prototype splits navigation from editing instead — and, crucially,
-the parameter table shows *every* parameter from *every* loaded dataset
+the parameter tree shows *every* parameter from *every* loaded dataset
 at once, all the time. That wasn't the first design: the first version
 filtered the table down to whatever was selected in the tree, which
 turned out to be a real problem, not just a cosmetic tradeoff — you
 can't multi-select two parameters to link them if they're never visible
 at the same time, and linking parameters *across* datasets is a core
-co-refinement workflow. So the table doesn't filter by tree *selection*
-— clicking a tree row highlights the matching table rows without hiding
-any others. It does filter by the tree's fit-inclusion *checkbox*,
-though: unchecking a dataset removes its parameters from the table
-entirely, on the basis that if you're not fitting it right now you
-don't want its rows cluttering the view. A constraint made while a
-dataset was checked survives being unchecked -- constraints live on the
-`Parameter` objects, not in the table -- so linking against a
+co-refinement workflow. So the parameter tree doesn't filter by
+navigation-tree *selection* — clicking a tree row expands and highlights
+the matching rows without hiding any others. It does filter by the
+tree's fit-inclusion *checkbox*, though: unchecking a dataset removes
+its parameters entirely, on the basis that if you're not fitting it
+right now you don't want its rows cluttering the view. A constraint made
+while a dataset was checked survives being unchecked -- constraints live
+on the `Parameter` objects, not in the model -- so linking against a
 currently-unchecked dataset just means checking it first.
+
+The parameter view is itself a second tree, not a flat table: each
+dataset's parameters are grouped by Component (and its own
+scale/bkg/dq/q_offset under a synthetic "Model" group), expandable and
+collapsible per group, so a large `Structure`'s parameters don't have to
+be disambiguated from one long undifferentiated list. Grouping only
+changes how rows are organised, not which ones exist — expanding
+everything shows exactly the old flat set, and multi-selecting rows to
+link them still works across groups and across datasets, since
+selection is keyed on `Parameter` identity, never on position in a flat
+list.
 
 - **`datastore.py`** — `DataObject` (name + dataset + model + whether
   it's included in the next fit) and `DataStore` (an ordered collection
@@ -44,43 +55,51 @@ currently-unchecked dataset just means checking it first.
 - **`models.py`** — `DataStoreTreeModel` (pure navigation: one generic
   node class per row, `DataObject` at the top level with a checkbox
   controlling `in_fit`, `Component` rows nested underneath, recursing
-  into `Stack`s automatically) and `ParameterTableModel` (flat, one row
-  per `Parameter`, across *every* `DataObject` in the store, with a
-  `Dataset` column so you can tell which one each row belongs to).
-  Dependency propagation, including across datasets, lives in exactly
-  one place: `ParameterTableModel._rows_depending_on` — it only ever
-  looks at `Parameter` identity, never which dataset a parameter came
-  from, so cross-dataset linking falls out of the flat-table design for
-  free rather than needing special-case code. `link()`/`unlink()`
-  constrain a set of selected rows to the first one. `auto_limits()`
-  mirrors the production app's "Auto adjust limits" button exactly: on
-  every currently-*varying* parameter, sets bounds to `[0, 2*value]`
-  (or `[2*value, 0]` if `value` is negative — same shape, reflected
-  around zero), including the original's quirk of not special-casing
-  `value == 0` (a zero-width `[0, 0]` bound).
+  into `Stack`s automatically) and `ParameterTableModel` (a second tree:
+  Dataset -> [a "Model" group for scale/bkg/dq/q_offset, one group per
+  top-level Component, recursing into `Stack`s] -> individual `Parameter`/
+  `ComponentProperty` rows, across *every* `DataObject` in the store).
+  A `Stack`'s own group holds only its `repeats` Parameter; its children
+  get their own nested groups rather than having their parameters
+  flattened into the `Stack`'s row, so expand/collapse can tell a
+  `Stack`'s own parameter apart from what's inside it. Dependency
+  propagation, including across datasets and across groups, lives in
+  exactly one place: `ParameterTableModel._notify_dependents` — it only
+  ever looks at `Parameter` identity, never which dataset or group a
+  parameter came from, so cross-dataset linking falls out of the design
+  for free rather than needing special-case code. `link()`/`unlink()`
+  constrain a set of selected rows (as `QModelIndex`es, not row numbers —
+  a row number alone doesn't identify a row uniquely once rows have
+  different parents) to the first one. `index_for(obj)` looks up the
+  `QModelIndex` for a specific `Parameter`/`ComponentProperty` directly,
+  for driving selection or `setData()` without walking the tree by hand.
+  `auto_limits()` mirrors the production app's "Auto adjust limits"
+  button exactly: on every currently-*varying* parameter, sets bounds to
+  `[0, 2*value]` (or `[2*value, 0]` if `value` is negative — same shape,
+  reflected around zero), including the original's quirk of not
+  special-casing `value == 0` (a zero-width `[0, 0]` bound).
 
   `_boundary_slab_hidden_parameters(structure)` is what keeps
   thickness/iSLD/roughness/volfrac solvent for the fronting medium, and
   thickness/iSLD/volfrac solvent for the backing medium, out of
   `ParameterTableModel` entirely (they're not physically meaningful for
-  a semi-infinite Slab) — used by `set_datastore()` to filter the
-  flattened parameter list before building `self._rows`. Only applies
-  to a Slab that's an actual top-level Structure boundary
-  (`structure[0]`/`structure[-1]`); a Slab nested inside a `Stack` is
-  never affected, and neither is a `Stack` itself (which, as it turns
-  out, refnx doesn't allow as a Structure's first/last Component anyway
-  — only `Slab` and friends can go there). Since it's the *position*
-  that's hidden, not a specific Parameter, dragging a different Slab
-  into the first/last slot correctly hides its
-  thickness/iSLD/roughness/volfrac instead and un-hides the old one's,
-  the next time the table rebuilds.
+  a semi-infinite Slab) — used while building each Component's group to
+  filter its flattened parameter list. Only applies to a Slab that's an
+  actual top-level Structure boundary (`structure[0]`/`structure[-1]`);
+  a Slab nested inside a `Stack` is never affected, and neither is a
+  `Stack` itself (which, as it turns out, refnx doesn't allow as a
+  Structure's first/last Component anyway — only `Slab` and friends can
+  go there). Since it's the *position* that's hidden, not a specific
+  Parameter, dragging a different Slab into the first/last slot correctly
+  hides its thickness/iSLD/roughness/volfrac instead and un-hides the old
+  one's, the next time the tree rebuilds.
 
   Not every editable thing on a Component is a `Parameter` --
   `LipidLeaflet.reverse_monolayer` and `Spline.zgrad` are plain bools
   set directly on the object, so `.parameters.flattened()` (which is
-  all `ParameterTableModel` used to look at) can never see them, no
-  matter how the table's filtering changes. `ComponentProperty` wraps
-  one such attribute so it can sit in `self._rows` next to ordinary
+  what each Component's group otherwise looks at) can never see them, no
+  matter how the filtering changes. `ComponentProperty` wraps one such
+  attribute so it can sit in a Component's group alongside its ordinary
   `Parameter` rows, rendered as a checkbox in the Value column exactly
   like the `Vary` column already does for `Parameter.vary`.
   `COMPONENT_PROPERTIES` is a small, explicit registry (component type
@@ -92,10 +111,7 @@ currently-unchecked dataset just means checking it first.
   linking, `auto_limits()`, dependency propagation -- a
   `ComponentProperty` row in the selection is silently skipped rather
   than crashing, since none of those concepts apply to a plain
-  attribute. `_iter_components()` walks into `Stack`s by hand to find
-  properties nested inside one, since (unlike `Parameter`s, which
-  `Component.parameters` already flattens through a `Stack`
-  automatically) a plain attribute has no such built-in flattening.
+  attribute.
 
   `DataStoreTreeModel` also owns structural editing of a Structure:
   `insert_component()`, `remove_component()`, `move_component()`, plus
@@ -150,15 +166,17 @@ currently-unchecked dataset just means checking it first.
   production app's dedicated `LipidLeafletDialog`/`SplineDialog` is a
   separate, larger piece of work. Instead it builds the Component with
   reasonable placeholder values, adds it, and lets you edit every one of
-  those values afterward through the ordinary parameter table — since
-  that table is generic (it just flattens whatever `.parameters` a
+  those values afterward through the ordinary parameter tree — since
+  that tree is generic (it just flattens whatever `.parameters` a
   Component happens to expose), no bespoke editing UI is needed once the
   object exists, only a bespoke *constructor* for the ones that need it.
 - **`main.py`** — wires it all into a `QMainWindow`: dataset tree
   (top-left, checkboxes control fit inclusion, drag Components to
-  reorder them) drives highlighting in the parameter table (bottom-left,
-  always shows everything — select rows across datasets and hit **Link
-  Selected**/**Unlink Selected**/**Auto Limits**), reflectivity and SLD
+  reorder them) drives expanding and highlighting rows in the parameter
+  tree (bottom-left, grouped by Component and collapsible per group,
+  always shows everything for every checked dataset — select rows across
+  groups and datasets and hit **Link Selected**/**Unlink
+  Selected**/**Auto Limits**), reflectivity and SLD
   plots overlaying every dataset (right), a Fit button that builds a
   `GlobalObjective` from whichever datasets are checked and runs DE on a
   background thread — first checking that every varying parameter in
@@ -176,7 +194,7 @@ currently-unchecked dataset just means checking it first.
   Component* (also unlinks any parameter, anywhere, that depended on
   something in the removed Component, via `unlink_dependents`).
   `on_structure_changed`, connected to `DataStoreTreeModel.modelReset`,
-  is what refreshes the parameter table and plots after *any* structural
+  is what refreshes the parameter tree and plots after *any* structural
   edit — add, remove, or a drag-and-drop reorder — without each of those
   three call sites needing to remember to do it themselves.
 
@@ -205,13 +223,13 @@ currently-unchecked dataset just means checking it first.
 
 No MCMC, no dedicated LipidLeaflet/Spline parameter-entry dialogs (see
 `dialogs.py` above — you can still add either, just with placeholder
-values you then edit in the table), no undo, no session save/restore UI
-even though `persistence.py` supports it, no per-dataset visibility
-toggle separate from fit-inclusion (checking a dataset plots it, fits
-it, *and* shows its parameters in the table -- deliberately, per
+values you then edit in the parameter tree), no undo, no session
+save/restore UI even though `persistence.py` supports it, no per-dataset
+visibility toggle separate from fit-inclusion (checking a dataset plots
+it, fits it, *and* shows its parameters in the tree -- deliberately, per
 feedback while building this: the production app treats "visible on the
 plot" and "currently fitting" as separate concerns, but here a single
-checkbox controls plot/fit/table visibility together. Splitting them
+checkbox controls plot/fit/tree visibility together. Splitting them
 back out into independent toggles is a reasonable next step if "shown
 but not fitted" turns out to matter in practice). Drag-and-drop
 reordering only works on *top-level* Components of a Structure, not
@@ -238,14 +256,21 @@ QT_QPA_PLATFORM=offscreen python3 main.py     # headless
 actually work, not just compile:
 
 - both startup datasets are loaded and *all* of their parameters are in
-  the table at once, not just one dataset's;
-- selecting a tree row highlights (scrolls to/selects) the right table
-  rows without hiding any others — proving the "always show everything"
-  design actually holds;
-- linking two parameters *across* datasets works, including dependency
-  propagation on edit;
+  the tree at once, not just one dataset's;
+- parameters are grouped by Component (a "Model" group for
+  scale/bkg/dq/q_offset, one group per top-level Component in Structure
+  order) with only each Component's own rows as its children -- and a
+  `Stack`'s own group holds just `repeats`, with its child Components
+  getting their own nested groups rather than having their parameters
+  flattened in;
+- selecting a tree row expands and highlights (scrolls to/selects) the
+  right rows in the parameter tree without hiding any others — proving
+  the "always show everything" design actually holds, now across
+  groups as well as datasets;
+- linking two parameters *across* datasets (and across different
+  Component groups) works, including dependency propagation on edit;
 - the first Slab's thickness/iSLD/roughness/volfrac and the last
-  Slab's thickness/iSLD/volfrac are hidden from the table, a middle
+  Slab's thickness/iSLD/volfrac are hidden from the tree, a middle
   Slab is untouched, a Slab nested in a `Stack` is never treated as a
   boundary even if the `Stack` itself sits mid-structure, and dragging
   a different Slab into the first slot moves *which* parameters are
@@ -262,8 +287,8 @@ actually work, not just compile:
   on the demo datastore's already-finite bounds;
 - unchecking a dataset in the tree removes it from
   `DataStore.fitted_objects()` *and* hides its rows in the parameter
-  table, and a constraint made before unchecking survives (it lives on
-  the `Parameter`, not the table) and reappears when re-checked;
+  tree, and a constraint made before unchecking survives (it lives on
+  the `Parameter`, not the tree) and reappears when re-checked;
 - `FitController` runs a `GlobalObjective` built from the checked
   datasets asynchronously, and total chi² drops;
 - Load Data *adds* a dataset rather than replacing the store, and
@@ -284,12 +309,13 @@ actually work, not just compile:
   in the tree at once (not just one), does nothing (rather than
   crashing) if nothing's selected, and also unlinks dependents of
   whatever model it's replacing;
-- removing a dataset actually removes it from the tree and table.
+- removing a dataset actually removes it from the navigation tree and
+  the parameter tree.
 
 `test_structure_editing.py` covers Add/Remove/reorder Component:
 
 - adding a Component through the (faked, non-modal) dialog inserts it
-  at the chosen position and the parameter table picks up its
+  at the chosen position and the parameter tree picks up its
   parameters automatically, with no explicit refresh call in the
   handler -- proving the `modelReset` → `on_structure_changed` cascade
   actually does its job;
@@ -301,7 +327,7 @@ actually work, not just compile:
 - a drag-and-drop reorder (driven directly through
   `mimeData()`/`dropMimeData()`, since simulating real mouse-drag events
   isn't practical headless) produces the expected new order and
-  triggers the same table/plot refresh;
+  triggers the same tree/plot refresh;
 - a reorder that would put a non-`Slab` first or last is rejected
   (`dropMimeData` returns `False`, order unchanged);
 - a Component nested inside a `Stack` can't be dragged at all

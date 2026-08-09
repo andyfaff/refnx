@@ -6,12 +6,13 @@ architecture sketch.
 
 Structure tree (top-left) lists every loaded dataset, checkable to
 control whether it's included in the next fit, expandable to see its
-layers. The parameter table (bottom-left) always shows *every*
-parameter from *every* loaded dataset at once -- select rows across
-datasets and hit "Link Selected" to constrain them together. Reflectivity
-and SLD plots (right) overlay every dataset. Fit runs CurveFitter (a
-plain Objective for one dataset, a GlobalObjective for several) on a
-background thread via FitController.
+layers. The parameter tree (bottom-left) always shows *every*
+parameter from *every* checked dataset at once, grouped by Component
+and expandable/collapsible per group -- select rows across groups and
+datasets and hit "Link Selected" to constrain them together.
+Reflectivity and SLD plots (right) overlay every dataset. Fit runs
+CurveFitter (a plain Objective for one dataset, a GlobalObjective for
+several) on a background thread via FitController.
 
 Run with:
     QT_QPA_PLATFORM=offscreen python3 main.py     # headless smoke test
@@ -130,15 +131,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.on_tree_context_menu
         )
 
-        self.table_view = QtWidgets.QTableView()
+        self.table_view = QtWidgets.QTreeView()
         self.table_view.setModel(self.parameter_model)
-        self.table_view.horizontalHeader().setStretchLastSection(True)
+        self.table_view.header().setStretchLastSection(True)
         self.table_view.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
         self.table_view.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         )
+        # everything visible at once by default, same as the old flat
+        # table -- collapsing a group is opt-in, not the starting state
+        self.table_view.expandAll()
         self.parameter_model.dataChanged.connect(self.on_parameter_changed)
 
         self.link_button = QtWidgets.QPushButton("Link Selected")
@@ -241,6 +245,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_structure_changed(self):
         self.tree_view.expandAll()
         self.parameter_model.set_datastore(self.datastore)
+        self.table_view.expandAll()
         self.plot_controller.update(self.datastore)
 
     def _selected_data_object(self):
@@ -507,7 +512,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_tree_selection(self, current, previous):
         """Doesn't filter the table -- everything stays visible, since
         that's what makes cross-dataset multi-select-to-link possible.
-        Just scrolls to, and highlights, whatever was clicked."""
+        Just expands whatever group(s) it's in, scrolls to, and
+        highlights, whatever was clicked."""
         obj = self.tree_model.object_for_index(current)
         data_object = self.tree_model.data_object_for_index(current)
         if obj is None or data_object is None:
@@ -518,26 +524,27 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             wanted = set(obj.parameters.flattened())
 
-        rows = [
-            r
-            for r, (name, p) in enumerate(self.parameter_model._rows)
-            if name == data_object.name and p in wanted
-        ]
-        if not rows:
-            return
-
+        last_col = self.parameter_model.columnCount() - 1
+        indexes = []
         selection = QtCore.QItemSelection()
-        for r in rows:
-            top_left = self.parameter_model.index(r, 0)
+        for p in wanted:
+            top_left = self.parameter_model.index_for(p)
+            if not top_left.isValid():
+                continue
+            indexes.append(top_left)
             bottom_right = self.parameter_model.index(
-                r, self.parameter_model.columnCount() - 1
+                top_left.row(), last_col, top_left.parent()
             )
             selection.select(top_left, bottom_right)
+            self.table_view.expand(top_left.parent())
+
+        if not indexes:
+            return
 
         self.table_view.selectionModel().select(
             selection, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
         )
-        self.table_view.scrollTo(self.parameter_model.index(rows[0], 0))
+        self.table_view.scrollTo(indexes[0])
 
     def on_parameter_changed(self, top_left, bottom_right, roles):
         self.plot_controller.update(self.datastore)
@@ -549,25 +556,40 @@ class MainWindow(QtWidgets.QMainWindow):
         # unconditionally rather than checking whether `roles` was
         # actually CheckStateRole.
         self.parameter_model.set_datastore(self.datastore)
+        self.table_view.expandAll()
 
     def _selected_table_rows(self):
-        rows = {idx.row() for idx in self.table_view.selectedIndexes()}
-        return sorted(rows)
+        """One QModelIndex (column 0) per selected row, deduplicated --
+        SelectRows means selectedIndexes() returns one index per
+        *column* of each selected row, and with a tree, `.row()` alone
+        can't dedupe them since it's relative to each row's own parent,
+        not global."""
+        seen = set()
+        result = []
+        for idx in self.table_view.selectedIndexes():
+            node = idx.sibling(idx.row(), 0).internalPointer()
+            if node in seen:
+                continue
+            seen.add(node)
+            result.append(
+                self.parameter_model.index(idx.row(), 0, idx.parent())
+            )
+        return result
 
     def on_link_clicked(self):
-        rows = self._selected_table_rows()
-        if len(rows) < 2:
+        indexes = self._selected_table_rows()
+        if len(indexes) < 2:
             self.msg("Select two or more parameter rows to link.")
             return
-        self.parameter_model.link(rows)
+        self.parameter_model.link(indexes)
         self.plot_controller.update(self.datastore)
 
     def on_unlink_clicked(self):
-        rows = self._selected_table_rows()
-        if not rows:
+        indexes = self._selected_table_rows()
+        if not indexes:
             self.msg("Select one or more parameter rows to unlink.")
             return
-        self.parameter_model.unlink(rows)
+        self.parameter_model.unlink(indexes)
         self.plot_controller.update(self.datastore)
 
     def on_auto_limits_clicked(self):
@@ -639,13 +661,11 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.msg("Fit complete")
             # values changed under the table's feet; whatever's shown
-            # may now be stale
-            top_left = self.parameter_model.index(0, 0)
-            bottom_right = self.parameter_model.index(
-                self.parameter_model.rowCount() - 1,
-                self.parameter_model.columnCount() - 1,
-            )
-            self.parameter_model.dataChanged.emit(top_left, bottom_right)
+            # may now be stale -- a full rebuild is simplest since the
+            # changed rows are scattered across the tree rather than
+            # one contiguous range
+            self.parameter_model.set_datastore(self.datastore)
+            self.table_view.expandAll()
         self.plot_controller.update(self.datastore)
 
 

@@ -3,19 +3,26 @@ DataStoreTreeModel   -- pure navigation: DataObject -> Component rows
                         (recursing into Stacks), one row per loaded
                         dataset at the top level, checkable to control
                         whether it's included in the next fit.
-ParameterTableModel  -- flat, one row per Parameter, across *every*
-                        loaded dataset at once (not just whichever one
-                        is selected in the tree). That's the point: you
-                        can only multi-select parameters to link them if
-                        they're all visible in the same view, including
-                        across datasets.
+ParameterTableModel  -- a second, separate tree: Dataset -> [Model
+                        parameters, one group per top-level Component
+                        (recursing into Stacks)] -> individual
+                        Parameter/ComponentProperty rows, expandable
+                        per group. Still shows *every* checked
+                        dataset's parameters at once, not just
+                        whichever one is selected in the navigation
+                        tree -- that's the point: you can only
+                        multi-select parameters to link them if
+                        they're all visible in the same view,
+                        including across datasets. Grouping by
+                        Component only changes how the rows are
+                        organised, not which ones exist.
 
 Splitting navigation from editing still means there's exactly one
-generic node type in the tree, and exactly one place
-(ParameterTableModel._rows_depending_on) that knows how to propagate a
+generic node type per tree, and exactly one place
+(ParameterTableModel._notify_dependents) that knows how to propagate a
 change to linked parameters -- linking across datasets falls out of
 that for free, since it only ever looks at Parameter identity and
-`.dependencies()`, never which dataset a parameter came from.
+`.dependencies()`, never which dataset or group a parameter came from.
 """
 
 from qtpy import QtCore
@@ -113,18 +120,11 @@ class ComponentProperty:
         return hash((id(self.component), self.attr_name))
 
 
-def _iter_components(component):
-    """Yields `component` and, if it's a Stack, everything nested
-    inside it -- recursively, since a Stack can itself contain another
-    Stack. Parameters already flatten through Stacks automatically (see
-    Component.parameters), but plain attributes like
-    LipidLeaflet.reverse_monolayer don't, so anything that wants to see
-    every Component regardless of nesting (i.e. _component_properties
-    below) needs to walk the tree itself."""
-    yield component
-    if isinstance(component, Stack):
-        for child in component:
-            yield from _iter_components(child)
+def _component_label(obj):
+    """Display text for a DataObject or Component row -- its own name
+    if it has one (most Components default to '' until named), falling
+    back to the Python class name (e.g. "Slab", "LipidLeaflet")."""
+    return getattr(obj, "name", None) or type(obj).__name__
 
 
 def _component_properties(component):
@@ -209,7 +209,7 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
         obj = index.internalPointer().obj
 
         if role == Qt.ItemDataRole.DisplayRole:
-            return getattr(obj, "name", None) or type(obj).__name__
+            return _component_label(obj)
 
         if role == Qt.ItemDataRole.CheckStateRole and isinstance(
             obj, DataObject
@@ -432,15 +432,54 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
         return base
 
 
-class ParameterTableModel(QtCore.QAbstractTableModel):
+class _ModelParametersGroup:
+    """Sentinel standing in for a DataObject's own scale/bkg/dq/
+    q_offset parameters, which don't belong to any Component -- gives
+    them a group row of their own in ParameterTableModel, the same way
+    the production app's ReflectModelNode wraps them in a
+    ParametersNode."""
+
+    __slots__ = ("data_object",)
+
+    def __init__(self, data_object):
+        self.data_object = data_object
+
+
+class _ParamNode:
+    """One row in ParameterTableModel's tree: a dataset, a group (a
+    DataObject's _ModelParametersGroup, or a Component -- possibly
+    nested, for a Stack's children), or a leaf (Parameter or
+    ComponentProperty). `dataset_name` is carried on every node so a
+    leaf's owning dataset can be read without walking up the tree."""
+
+    __slots__ = ("obj", "dataset_name", "parent", "row", "children")
+
+    def __init__(self, obj, dataset_name, parent, row):
+        self.obj = obj
+        self.dataset_name = dataset_name
+        self.parent = parent
+        self.row = row
+        self.children = []
+
+
+class ParameterTableModel(QtCore.QAbstractItemModel):
     """
-    One row per Parameter, across every DataObject in the datastore
-    that's currently checked for fitting (DataObject.in_fit). Editing a
-    value/bound writes straight to the Parameter and emits dataChanged
-    both for the edited cell *and* for every other row whose parameter
-    depends on it -- including rows belonging to a different dataset,
-    since dependency checking only ever looks at Parameter identity,
-    never which dataset a row came from.
+    Tree of every Parameter (and ComponentProperty) across every
+    DataObject in the datastore that's currently checked for fitting
+    (DataObject.in_fit): Dataset -> [Model parameters, one group per
+    top-level Component, recursing into Stacks] -> individual rows.
+    Grouping by Component only changes how rows are organised -- every
+    checked dataset's parameters are still all present at once, not
+    just whichever one is selected in the navigation tree, so
+    multi-selecting rows to link them still works across groups and
+    across datasets exactly as it did in the old flat table.
+
+    Editing a value/bound writes straight to the Parameter and emits
+    dataChanged both for the edited cell *and* for every other row
+    whose parameter depends on it -- including rows belonging to a
+    different dataset or a different Component group, since dependency
+    checking only ever looks at Parameter identity, never which
+    dataset or group a row came from.
 
     Unchecking a dataset in the tree hides its parameters here (see
     main.py's connection from DataStoreTreeModel.dataChanged to
@@ -452,67 +491,143 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
     want it included in the fit.
     """
 
-    COLUMNS = ("dataset", "name", "value", "vary", "lb", "ub", "constraint")
-    HEADERS = (
-        "Dataset",
-        "Name",
-        "Value",
-        "Vary",
-        "Lower",
-        "Upper",
-        "Constraint",
-    )
+    COLUMNS = ("name", "value", "vary", "lb", "ub", "constraint")
+    HEADERS = ("Name", "Value", "Vary", "Lower", "Upper", "Constraint")
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._root = _ParamNode(None, None, None, 0)
         self._rows = (
             []
-        )  # list of (data_object_name, Parameter | ComponentProperty)
+        )  # list of (dataset_name, Parameter | ComponentProperty)
+        self._leaf_node_of = {}  # Parameter | ComponentProperty -> _ParamNode
         self._row_of = (
             {}
-        )  # Parameter -> row (ComponentProperty isn't linkable)
+        )  # Parameter -> QModelIndex (ComponentProperty isn't linkable)
 
     def set_datastore(self, datastore):
         self.beginResetModel()
+        self._datastore = datastore
+        self._root = _ParamNode(None, None, None, 0)
         self._rows = []
+        self._leaf_node_of = {}
         if datastore is not None:
             for data_object in datastore:
                 if not data_object.in_fit:
                     continue
-                self._rows.extend(self._rows_for(data_object))
+                do_node = _ParamNode(
+                    data_object,
+                    data_object.name,
+                    self._root,
+                    len(self._root.children),
+                )
+                self._root.children.append(do_node)
+                self._populate_dataset(do_node, data_object)
         self._row_of = {
-            obj: i
-            for i, (_, obj) in enumerate(self._rows)
+            obj: self.createIndex(node.row, 0, node)
+            for obj, node in self._leaf_node_of.items()
             if isinstance(obj, Parameter)
         }
         self.endResetModel()
 
-    def _rows_for(self, data_object):
+    def _populate_dataset(self, do_node, data_object):
         name = data_object.name
         model = data_object.model
-        rows = [
-            (name, p)
-            for p in (model.scale, model.bkg, model.dq, model.q_offset)
-        ]
+
+        group_node = _ParamNode(
+            _ModelParametersGroup(data_object),
+            name,
+            do_node,
+            len(do_node.children),
+        )
+        do_node.children.append(group_node)
+        for p in (model.scale, model.bkg, model.dq, model.q_offset):
+            self._add_leaf(group_node, p, name)
 
         hidden = _boundary_slab_hidden_parameters(model.structure)
-        for top_level in model.structure:
-            for p in top_level.parameters.flattened():
-                if p in hidden:
-                    continue
-                rows.append((name, p))
-            # attributes like LipidLeaflet.reverse_monolayer don't flatten
-            # through a Stack the way Parameters do, so walk it by hand
-            for component in _iter_components(top_level):
-                for prop in _component_properties(component):
-                    rows.append((name, prop))
-        return rows
+        for component in model.structure:
+            self._populate_component(do_node, component, name, hidden)
+
+    def _populate_component(
+        self, parent_node, component, dataset_name, hidden
+    ):
+        comp_node = _ParamNode(
+            component, dataset_name, parent_node, len(parent_node.children)
+        )
+        parent_node.children.append(comp_node)
+
+        # a Stack's own Parameter is just `repeats` -- its children get
+        # their own nested group below, rather than being flattened in
+        # here, so expand/collapse can tell them apart
+        own_params = (
+            [component.repeats]
+            if isinstance(component, Stack)
+            else component.parameters.flattened()
+        )
+        for p in own_params:
+            if p in hidden:
+                continue
+            self._add_leaf(comp_node, p, dataset_name)
+
+        for prop in _component_properties(component):
+            self._add_leaf(comp_node, prop, dataset_name)
+
+        if isinstance(component, Stack):
+            for child in component:
+                self._populate_component(
+                    comp_node, child, dataset_name, hidden
+                )
+
+    def _add_leaf(self, parent_node, obj, dataset_name):
+        node = _ParamNode(
+            obj, dataset_name, parent_node, len(parent_node.children)
+        )
+        parent_node.children.append(node)
+        self._leaf_node_of[obj] = node
+        self._rows.append((dataset_name, obj))
+
+    # -- QAbstractItemModel plumbing --
+
+    def index(self, row, column, parent=QtCore.QModelIndex()):
+        parent_node = (
+            parent.internalPointer() if parent.isValid() else self._root
+        )
+        if parent_node is None or row >= len(parent_node.children):
+            return QtCore.QModelIndex()
+        return self.createIndex(row, column, parent_node.children[row])
+
+    def parent(self, index):
+        if not index.isValid():
+            return QtCore.QModelIndex()
+        node = index.internalPointer()
+        if node.parent is None or node.parent is self._root:
+            return QtCore.QModelIndex()
+        return self.createIndex(node.parent.row, 0, node.parent)
 
     def rowCount(self, parent=QtCore.QModelIndex()):
-        return 0 if parent.isValid() else len(self._rows)
+        node = parent.internalPointer() if parent.isValid() else self._root
+        return len(node.children) if node is not None else 0
 
     def columnCount(self, parent=QtCore.QModelIndex()):
         return len(self.COLUMNS)
+
+    def leaf_count(self):
+        """Total number of Parameter/ComponentProperty leaf rows across
+        the whole tree -- the tree-model analogue of the old flat
+        table's rowCount(), for callers that just want "how many
+        editable rows are there" without caring about grouping."""
+        return len(self._rows)
+
+    def index_for(self, obj, column=0):
+        """QModelIndex for a specific Parameter or ComponentProperty
+        leaf, in the given column -- e.g. to build a selection or drive
+        setData() directly without walking the tree by hand. Returns an
+        invalid index if `obj` isn't currently shown (not present, or
+        its dataset is unchecked)."""
+        node = self._leaf_node_of.get(obj)
+        if node is None:
+            return QtCore.QModelIndex()
+        return self.createIndex(node.row, column, node)
 
     def headerData(
         self, section, orientation, role=Qt.ItemDataRole.DisplayRole
@@ -530,38 +645,48 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
 
         col = self.COLUMNS[index.column()]
         base = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-        _, obj = self._rows[index.row()]
+        obj = index.internalPointer().obj
 
         if isinstance(obj, ComponentProperty):
             if col == "value" and isinstance(obj.value, bool):
                 return base | Qt.ItemFlag.ItemIsUserCheckable
             return base
 
-        if col == "vary":
-            return base | Qt.ItemFlag.ItemIsUserCheckable
+        if isinstance(obj, Parameter):
+            if col == "vary":
+                return base | Qt.ItemFlag.ItemIsUserCheckable
+            if col in ("value", "lb", "ub") and obj.constraint is None:
+                return base | Qt.ItemFlag.ItemIsEditable
+            return base
 
-        if col in ("value", "lb", "ub") and obj.constraint is None:
-            return base | Qt.ItemFlag.ItemIsEditable
-
-        return base
+        return base  # group / dataset row -- name only, nothing editable
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
 
-        dataset_name, obj = self._rows[index.row()]
+        obj = index.internalPointer().obj
         col = self.COLUMNS[index.column()]
 
         if isinstance(obj, ComponentProperty):
-            return self._property_data(dataset_name, obj, col, role)
+            return self._property_data(obj, col, role)
+        if isinstance(obj, Parameter):
+            return self._parameter_data(obj, col, role)
 
-        p = obj
+        if role == Qt.ItemDataRole.DisplayRole and col == "name":
+            return self._group_label(obj)
+        return None
+
+    def _group_label(self, obj):
+        if isinstance(obj, _ModelParametersGroup):
+            return "Model"
+        return _component_label(obj)  # DataObject or Component
+
+    def _parameter_data(self, p, col, role):
         if role == Qt.ItemDataRole.CheckStateRole and col == "vary":
             return Qt.CheckState.Checked if p.vary else Qt.CheckState.Unchecked
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
-            if col == "dataset":
-                return dataset_name
             if col == "name":
                 return p.name
             if col == "value":
@@ -575,7 +700,7 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
 
         return None
 
-    def _property_data(self, dataset_name, prop, col, role):
+    def _property_data(self, prop, col, role):
         if role == Qt.ItemDataRole.CheckStateRole:
             if col == "value" and isinstance(prop.value, bool):
                 return (
@@ -586,8 +711,6 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
             return None
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
-            if col == "dataset":
-                return dataset_name
             if col == "name":
                 return prop.attr_name
             if col == "value" and not isinstance(prop.value, bool):
@@ -599,7 +722,8 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
         if not index.isValid():
             return False
 
-        _, obj = self._rows[index.row()]
+        node = index.internalPointer()
+        obj = node.obj
         col = self.COLUMNS[index.column()]
 
         if isinstance(obj, ComponentProperty):
@@ -613,74 +737,82 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
                 return True
             return False
 
-        p = obj
-        if role == Qt.ItemDataRole.CheckStateRole and col == "vary":
-            p.vary = value == Qt.CheckState.Checked.value
-            self.dataChanged.emit(index, index, [role])
-            return True
+        if isinstance(obj, Parameter):
+            p = obj
+            if role == Qt.ItemDataRole.CheckStateRole and col == "vary":
+                p.vary = value == Qt.CheckState.Checked.value
+                self.dataChanged.emit(index, index, [role])
+                return True
 
-        if role == Qt.ItemDataRole.EditRole and col in ("value", "lb", "ub"):
-            try:
-                fvalue = float(value)
-            except (TypeError, ValueError):
-                return False
+            if role == Qt.ItemDataRole.EditRole and col in (
+                "value",
+                "lb",
+                "ub",
+            ):
+                try:
+                    fvalue = float(value)
+                except (TypeError, ValueError):
+                    return False
 
-            if col == "value":
-                p.value = fvalue
-            elif col == "lb":
-                p.bounds.lb = fvalue
-            elif col == "ub":
-                p.bounds.ub = fvalue
+                if col == "value":
+                    p.value = fvalue
+                elif col == "lb":
+                    p.bounds.lb = fvalue
+                elif col == "ub":
+                    p.bounds.ub = fvalue
 
-            self.dataChanged.emit(index, index, [role])
-            if col == "value":
-                self._notify_dependents(p)
-            return True
+                self.dataChanged.emit(index, index, [role])
+                if col == "value":
+                    self._notify_dependents(p)
+                return True
 
         return False
 
     def _notify_dependents(self, parameter):
         value_col = self.COLUMNS.index("value")
-        for row in self._rows_depending_on(parameter):
-            idx = self.index(row, value_col)
-            self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.EditRole])
+        for p, idx in self._row_of.items():
+            if p is parameter or parameter not in p.dependencies():
+                continue
+            node = idx.internalPointer()
+            value_idx = self.createIndex(node.row, value_col, node)
+            self.dataChanged.emit(
+                value_idx, value_idx, [Qt.ItemDataRole.EditRole]
+            )
 
-    def _rows_depending_on(self, parameter):
-        return [
-            row
-            for row, (_, p) in enumerate(self._rows)
-            if isinstance(p, Parameter)
-            and p is not parameter
-            and parameter in p.dependencies()
+    def parameter_at(self, index):
+        return index.internalPointer().obj
+
+    def link(self, indexes):
+        """Constrain every (real Parameter) index in `indexes` to the
+        first one. ComponentProperty/group rows in the selection are
+        silently skipped -- refnx constraints only apply to
+        Parameters."""
+        indexes = [
+            i for i in indexes if isinstance(self.parameter_at(i), Parameter)
         ]
-
-    def parameter_at(self, row):
-        return self._rows[row][1]
-
-    def link(self, rows):
-        """Constrain every (real Parameter) row in `rows` to the first
-        one. ComponentProperty rows in the selection are silently
-        skipped -- refnx constraints only apply to Parameters."""
-        rows = [r for r in rows if isinstance(self.parameter_at(r), Parameter)]
-        if len(rows) < 2:
+        if len(indexes) < 2:
             return
-        master = self.parameter_at(rows[0])
+        master = self.parameter_at(indexes[0])
+        value_col = self.COLUMNS.index("value")
         constraint_col = self.COLUMNS.index("constraint")
-        for row in rows[1:]:
-            self.parameter_at(row).constraint = master
-            idx_lo = self.index(row, self.COLUMNS.index("value"))
-            idx_hi = self.index(row, constraint_col)
+        for idx in indexes[1:]:
+            self.parameter_at(idx).constraint = master
+            node = idx.internalPointer()
+            idx_lo = self.createIndex(node.row, value_col, node)
+            idx_hi = self.createIndex(node.row, constraint_col, node)
             self.dataChanged.emit(idx_lo, idx_hi)
 
-    def unlink(self, rows):
+    def unlink(self, indexes):
+        value_col = self.COLUMNS.index("value")
         constraint_col = self.COLUMNS.index("constraint")
-        for row in rows:
-            obj = self.parameter_at(row)
+        for idx in indexes:
+            obj = self.parameter_at(idx)
             if not isinstance(obj, Parameter):
                 continue
             obj.constraint = None
-            idx_lo = self.index(row, self.COLUMNS.index("value"))
-            idx_hi = self.index(row, constraint_col)
+            node = idx.internalPointer()
+            idx_lo = self.createIndex(node.row, value_col, node)
+            idx_hi = self.createIndex(node.row, constraint_col, node)
             self.dataChanged.emit(idx_lo, idx_hi)
 
     def auto_limits(self):
@@ -706,8 +838,8 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
         lb_col = self.COLUMNS.index("lb")
         ub_col = self.COLUMNS.index("ub")
         touched = 0
-        for row, (_, p) in enumerate(self._rows):
-            if not isinstance(p, Parameter) or not p.vary:
+        for p, idx in self._row_of.items():
+            if not p.vary:
                 continue
             val = p.value
             if val < 0:
@@ -717,8 +849,9 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
                 p.bounds.lb = 0
                 p.bounds.ub = 2 * val
             touched += 1
-            idx_lo = self.index(row, lb_col)
-            idx_hi = self.index(row, ub_col)
+            node = idx.internalPointer()
+            idx_lo = self.createIndex(node.row, lb_col, node)
+            idx_hi = self.createIndex(node.row, ub_col, node)
             self.dataChanged.emit(idx_lo, idx_hi)
         return touched
 
