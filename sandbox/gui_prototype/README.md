@@ -126,6 +126,18 @@ list.
   than crashing, since none of those concepts apply to a plain
   attribute.
 
+  `DataStoreTreeModel` rows are also directly editable: double-click a
+  Component (not a `DataObject` — its name is a fixed identity, the
+  `DataStore`'s key) to rename it, e.g. "Slab" → "Silicon". That's
+  just `component.name = value` in `setData()`; nothing separate has
+  to propagate the new name into the parameter tree, since
+  `ParameterTableModel`'s group label (`_group_label`/
+  `_component_label`) reads the same live `.name` off the same
+  `Component` object -- the two trees just both end up looking at it.
+  Clearing the name back to `""` falls back to the type name again
+  (`_component_label`'s existing behaviour for an unnamed Component),
+  rather than showing a blank row.
+
   `DataStoreTreeModel` also owns structural editing of a Structure:
   `insert_component()`, `remove_component()`, `move_component()`, plus
   drag-and-drop (`mimeData()`/`dropMimeData()`) for reordering top-level
@@ -422,7 +434,10 @@ actually work, not just compile:
   Component can be dragged into the first or last position, even
   another `Slab` — the boundary Slabs are pinned, not just type-checked;
 - a Component nested inside a `Stack` can't be dragged at all
-  (`mimeData()` returns `None` for it).
+  (`mimeData()` returns `None` for it);
+- renaming a Component through the navigation tree updates `.name` and
+  is picked up by the parameter tree's group label for it; clearing the
+  name falls back to the type name; a dataset row isn't editable at all.
 
 `test_link_equivalent.py` covers Link Equivalent Parameters:
 

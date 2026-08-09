@@ -220,7 +220,7 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
             return None
         obj = index.internalPointer().obj
 
-        if role == Qt.ItemDataRole.DisplayRole:
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return _component_label(obj)
 
         if role == Qt.ItemDataRole.CheckStateRole and isinstance(
@@ -243,6 +243,20 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
             obj, DataObject
         ):
             obj.in_fit = value == Qt.CheckState.Checked.value
+            self.dataChanged.emit(index, index, [role])
+            return True
+
+        if role == Qt.ItemDataRole.EditRole and not isinstance(
+            obj, DataObject
+        ):
+            # renames a Component -- a DataObject's own name is a fixed
+            # identity (it's the DataStore's key), so only Components
+            # are editable here. The new name shows up in the
+            # parameter tree too (see ParameterTableModel._group_label
+            # / _component_label), since both just read `.name` off
+            # the same live Component object -- no separate rename
+            # propagation needed.
+            obj.name = str(value)
             self.dataChanged.emit(index, index, [role])
             return True
 
@@ -454,6 +468,7 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
                 Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDropEnabled
             )
         else:
+            base |= Qt.ItemFlag.ItemIsEditable
             _, is_top_level = self._owning_list(node)
             if is_top_level:
                 base |= (

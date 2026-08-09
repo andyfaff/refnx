@@ -449,3 +449,66 @@ def test_add_component_dialog_position_range_allows_stack_boundary(qtbot):
     # a Stack has no first/last restriction -- the full range is offered
     assert dialog.position_spin.minimum() == 0
     assert dialog.position_spin.maximum() == len(stack)
+
+
+def test_rename_component_via_navigation_tree(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    polymer = do.model.structure[2]
+    idx = win.tree_model.index(2, 0, win.tree_model.index(0, 0))
+    assert win.tree_model.data(idx) == "Slab"  # unnamed, falls back to type
+
+    ok = win.tree_model.setData(idx, "Polymer layer")
+    assert ok
+    assert polymer.name == "Polymer layer"
+    assert win.tree_model.data(idx) == "Polymer layer"
+
+
+def test_rename_component_reflected_in_parameter_tree(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    polymer = do.model.structure[2]
+    idx = win.tree_model.index(2, 0, win.tree_model.index(0, 0))
+    win.tree_model.setData(idx, "Polymer layer")
+
+    do_index = win.parameter_model.index(0, 0)  # e361r
+    # Model group (0), si (1), sio2 (2), polymer (3), d2o (4)
+    polymer_group_index = win.parameter_model.index(3, 0, do_index)
+    assert polymer_group_index.internalPointer().obj is polymer
+    assert win.parameter_model.data(polymer_group_index) == "Polymer layer"
+
+
+def test_clearing_component_name_falls_back_to_type_name(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    polymer = do.model.structure[2]
+    idx = win.tree_model.index(2, 0, win.tree_model.index(0, 0))
+    win.tree_model.setData(idx, "Polymer layer")
+    assert win.tree_model.data(idx) == "Polymer layer"
+
+    win.tree_model.setData(idx, "")
+    assert polymer.name == ""
+    assert win.tree_model.data(idx) == "Slab"  # falls back to the type name
+
+
+def test_dataset_row_is_not_editable(qtbot):
+    # a DataObject's name is a fixed identity (it's the DataStore's
+    # key) -- only Components can be renamed through the tree
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do_index = win.tree_model.index(0, 0)
+    assert not (win.tree_model.flags(do_index) & Qt.ItemFlag.ItemIsEditable)
+
+    component_index = win.tree_model.index(0, 0, do_index)
+    assert win.tree_model.flags(component_index) & Qt.ItemFlag.ItemIsEditable

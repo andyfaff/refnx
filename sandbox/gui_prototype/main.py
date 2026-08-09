@@ -92,7 +92,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.datastore = datastore
 
         self.tree_model = DataStoreTreeModel(datastore)
-        self.tree_model.dataChanged.connect(self.on_fit_selection_changed)
+        self.tree_model.dataChanged.connect(self.on_tree_model_changed)
         # add/remove/move a Component all end with tree_model resetting
         # itself (see models.py) -- catching that one signal here means
         # the parameter table and plots refresh after any of them
@@ -584,12 +584,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_parameter_changed(self, top_left, bottom_right, roles):
         self.plot_controller.update(self.datastore)
 
-    def on_fit_selection_changed(self, top_left, bottom_right, roles):
-        # a dataset's checkbox was (un)checked -- ParameterTableModel
+    def on_tree_model_changed(self, top_left, bottom_right, roles):
+        # tree_model.dataChanged fires for two different edits: a
+        # dataset's checkbox being (un)checked (ParameterTableModel
         # only shows parameters for currently-checked datasets, so it
-        # needs rebuilding. Cheap enough at this scale to just do it
-        # unconditionally rather than checking whether `roles` was
-        # actually CheckStateRole.
+        # needs rebuilding), or a Component being renamed (its group
+        # label in the parameter tree needs to pick up the new name).
+        # Cheap enough at this scale to just rebuild unconditionally
+        # rather than branching on which one `roles` says it was.
         self.parameter_model.set_datastore(self.datastore)
         self.table_view.expandAll()
 
