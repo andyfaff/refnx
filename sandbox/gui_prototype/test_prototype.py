@@ -35,9 +35,9 @@ def test_multiple_datasets_all_displayed(qtbot):
     # not just whichever is currently selected
     dataset_names_in_table = {name for name, _ in win.parameter_model._rows}
     assert dataset_names_in_table == set(datastore.names)
-    # 24 params x 2 datasets, minus 5 hidden per dataset (thick/isld/
-    # rough for the first Slab, thick/isld for the last)
-    assert win.parameter_model.rowCount() == 38
+    # 24 params x 2 datasets, minus 7 hidden per dataset (thick/isld/
+    # rough/vfsolv for the first Slab, thick/isld/vfsolv for the last)
+    assert win.parameter_model.rowCount() == 34
 
 
 def test_boundary_slab_parameters_hidden(qtbot):
@@ -49,21 +49,23 @@ def test_boundary_slab_parameters_hidden(qtbot):
     first, last = structure[0], structure[-1]
     shown = win.parameter_model._row_of  # Parameter -> row, only shown ones
 
-    # first Slab: thickness, iSLD, and roughness are all hidden
+    # first Slab: thickness, iSLD, roughness, and volfrac solvent are
+    # all hidden
     assert first.thick not in shown
     assert first.sld.imag not in shown
     assert first.rough not in shown
-    # ...but its SLD and volfrac solvent are still shown
+    assert first.vfsolv not in shown
+    # ...but its SLD is still shown
     assert first.sld.real in shown
-    assert first.vfsolv in shown
 
-    # last Slab: thickness and iSLD are hidden, but roughness stays --
-    # that's a physically meaningful interface, unlike the first Slab's
+    # last Slab: thickness, iSLD, and volfrac solvent are hidden, but
+    # roughness stays -- that's a physically meaningful interface,
+    # unlike the first Slab's
     assert last.thick not in shown
     assert last.sld.imag not in shown
+    assert last.vfsolv not in shown
     assert last.rough in shown
     assert last.sld.real in shown
-    assert last.vfsolv in shown
 
     # a middle Slab is untouched
     middle = structure[1]
@@ -346,7 +348,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
     win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    assert win.parameter_model.rowCount() == 38
+    assert win.parameter_model.rowCount() == 34
 
     e365_index = win.tree_model.index(1, 0)
     win.tree_model.setData(
@@ -356,7 +358,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
     )
 
     # e365r's rows should be gone, e361r's should still be there
-    assert win.parameter_model.rowCount() == 19
+    assert win.parameter_model.rowCount() == 17
     assert {name for name, _ in win.parameter_model._rows} == {"e361r"}
 
     # a constraint made while it was checked should survive being
@@ -372,7 +374,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
         Qt.CheckState.Checked.value,
         Qt.ItemDataRole.CheckStateRole,
     )
-    assert win.parameter_model.rowCount() == 38
+    assert win.parameter_model.rowCount() == 34
     assert thick_e365.constraint is thick_e361
 
 
@@ -651,4 +653,4 @@ def test_remove_dataset(qtbot):
     assert len(datastore) == 1
     assert "e365r" not in datastore
     assert win.tree_model.rowCount() == 1
-    assert win.parameter_model.rowCount() == 19
+    assert win.parameter_model.rowCount() == 17

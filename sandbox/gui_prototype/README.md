@@ -60,19 +60,20 @@ currently-unchecked dataset just means checking it first.
   `value == 0` (a zero-width `[0, 0]` bound).
 
   `_boundary_slab_hidden_parameters(structure)` is what keeps
-  thickness/iSLD/roughness for the fronting medium, and thickness/iSLD
-  for the backing medium, out of `ParameterTableModel` entirely (they're
-  not physically meaningful for a semi-infinite Slab) — used by
-  `set_datastore()` to filter the flattened parameter list before
-  building `self._rows`. Only applies to a Slab that's an actual
-  top-level Structure boundary (`structure[0]`/`structure[-1]`); a Slab
-  nested inside a `Stack` is never affected, and neither is a `Stack`
-  itself (which, as it turns out, refnx doesn't allow as a Structure's
-  first/last Component anyway — only `Slab` and friends can go there).
-  Since it's the *position* that's hidden, not a specific Parameter,
-  dragging a different Slab into the first/last slot correctly hides
-  its thickness/iSLD/roughness instead and un-hides the old one's, the
-  next time the table rebuilds.
+  thickness/iSLD/roughness/volfrac solvent for the fronting medium, and
+  thickness/iSLD/volfrac solvent for the backing medium, out of
+  `ParameterTableModel` entirely (they're not physically meaningful for
+  a semi-infinite Slab) — used by `set_datastore()` to filter the
+  flattened parameter list before building `self._rows`. Only applies
+  to a Slab that's an actual top-level Structure boundary
+  (`structure[0]`/`structure[-1]`); a Slab nested inside a `Stack` is
+  never affected, and neither is a `Stack` itself (which, as it turns
+  out, refnx doesn't allow as a Structure's first/last Component anyway
+  — only `Slab` and friends can go there). Since it's the *position*
+  that's hidden, not a specific Parameter, dragging a different Slab
+  into the first/last slot correctly hides its
+  thickness/iSLD/roughness/volfrac instead and un-hides the old one's,
+  the next time the table rebuilds.
 
   Not every editable thing on a Component is a `Parameter` --
   `LipidLeaflet.reverse_monolayer` and `Spline.zgrad` are plain bools
@@ -243,12 +244,12 @@ actually work, not just compile:
   design actually holds;
 - linking two parameters *across* datasets works, including dependency
   propagation on edit;
-- the first Slab's thickness/iSLD/roughness and the last Slab's
-  thickness/iSLD are hidden from the table, a middle Slab is untouched,
-  a Slab nested in a `Stack` is never treated as a boundary even if the
-  `Stack` itself sits mid-structure, and dragging a different Slab into
-  the first slot moves *which* parameters are hidden rather than being
-  tied to a fixed Slab;
+- the first Slab's thickness/iSLD/roughness/volfrac and the last
+  Slab's thickness/iSLD/volfrac are hidden from the table, a middle
+  Slab is untouched, a Slab nested in a `Stack` is never treated as a
+  boundary even if the `Stack` itself sits mid-structure, and dragging
+  a different Slab into the first slot moves *which* parameters are
+  hidden rather than being tied to a fixed Slab;
 - `LipidLeaflet.reverse_monolayer` and `Spline.zgrad` show up as
   editable checkbox rows and actually flip the real attribute when
   toggled through the model; a `ComponentProperty` row mixed into a

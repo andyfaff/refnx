@@ -36,6 +36,8 @@ def _boundary_slab_hidden_parameters(structure):
     the very first one (there's nothing above it to roughen against).
     Roughness for the *last* Slab is kept -- that's the backing medium's
     interface with whatever's above it, which is physically meaningful.
+    volfrac solvent is hidden for both ends too -- fronting/backing
+    media are pure phases, not a solvated mixture.
 
     Only applies to a Slab that's actually a top-level Structure member
     (position 0 or -1); a Slab nested inside a Stack has no such
@@ -50,12 +52,14 @@ def _boundary_slab_hidden_parameters(structure):
         hidden.add(first.thick)
         hidden.add(first.sld.imag)
         hidden.add(first.rough)
+        hidden.add(first.vfsolv)
 
     if len(structure) > 1:
         last = structure[-1]
         if isinstance(last, Slab):
             hidden.add(last.thick)
             hidden.add(last.sld.imag)
+            hidden.add(last.vfsolv)
 
     return hidden
 
