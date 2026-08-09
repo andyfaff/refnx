@@ -31,9 +31,15 @@ from refnx.reflect import SLD, ReflectModel
 from refnx.analysis import Objective, GlobalObjective
 
 from datastore import DataObject, DataStore
-from models import DataStoreTreeModel, ParameterTableModel
+from models import (
+    DataStoreTreeModel,
+    ParameterTableModel,
+    StructureEditError,
+    unlink_dependents,
+)
 from controllers import FitController
 from plotting import PlotController
+from dialogs import AddComponentDialog, default_component
 import persistence
 
 
@@ -78,6 +84,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tree_model = DataStoreTreeModel(datastore)
         self.tree_model.dataChanged.connect(self.on_fit_selection_changed)
+        # add/remove/move a Component all end with tree_model resetting
+        # itself (see models.py) -- catching that one signal here means
+        # the parameter table and plots refresh after any of them
+        # without each needing its own explicit refresh call, including
+        # the drag-and-drop path, which doesn't go through a main.py
+        # handler at all.
+        self.tree_model.modelReset.connect(self.on_structure_changed)
         self.parameter_model = ParameterTableModel()
         self.parameter_model.set_datastore(datastore)
 
@@ -97,6 +110,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tree_view.selectionModel().currentChanged.connect(
             self.on_tree_selection
         )
+        # reordering top-level Components within a Structure (see
+        # DataStoreTreeModel.flags/mimeData/dropMimeData -- only
+        # top-level rows are drag-enabled, dropping is only accepted
+        # onto a DataObject's own children)
+        self.tree_view.setDragDropMode(
+            QtWidgets.QAbstractItemView.DragDropMode.InternalMove
+        )
+        self.tree_view.setDefaultDropAction(QtCore.Qt.DropAction.MoveAction)
+        self.tree_view.setDropIndicatorShown(True)
 
         self.table_view = QtWidgets.QTableView()
         self.table_view.setModel(self.parameter_model)
@@ -169,6 +191,18 @@ class MainWindow(QtWidgets.QMainWindow):
         remove_action = file_menu.addAction("Remove Selected Dataset")
         remove_action.triggered.connect(self.on_remove_dataset_triggered)
 
+        structure_menu = self.menuBar().addMenu("&Structure")
+
+        add_component_action = structure_menu.addAction("Add Component...")
+        add_component_action.triggered.connect(self.on_add_component_triggered)
+
+        remove_component_action = structure_menu.addAction(
+            "Remove Selected Component"
+        )
+        remove_component_action.triggered.connect(
+            self.on_remove_component_triggered
+        )
+
     def msg(self, text, timeout=8000):
         # non-modal, same reasoning as the production app: routine
         # messages shouldn't interrupt the workflow with a dialog.
@@ -177,9 +211,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh(self):
         """Refresh every view from the current state of self.datastore.
-        The one place that needs to know about the tree/table/plot all
-        at once -- everywhere else they're independent."""
+        tree_model.set_datastore() resetting itself triggers
+        on_structure_changed (see __init__), which handles re-expanding
+        the tree and refreshing the table/plot -- this is what to call
+        when self.datastore's *contents* changed (a dataset added or
+        removed, a whole model swapped in). Structural edits within a
+        single Structure (add/remove/move a Component) go through
+        tree_model directly and get the same refresh for free, since
+        those methods also end by resetting tree_model."""
         self.tree_model.set_datastore(self.datastore)
+
+    def on_structure_changed(self):
         self.tree_view.expandAll()
         self.parameter_model.set_datastore(self.datastore)
         self.plot_controller.update(self.datastore)
@@ -269,6 +311,85 @@ class MainWindow(QtWidgets.QMainWindow):
         self.datastore.remove(data_object.name)
         self._refresh()
         self.msg(f"Removed {data_object.name}")
+
+    def on_add_component_triggered(self):
+        if not len(self.datastore):
+            self.msg("Load a dataset first.")
+            return
+
+        current = self.tree_view.currentIndex()
+        default_dataset = self._selected_data_object()
+        default_dataset_name = (
+            default_dataset.name if default_dataset is not None else None
+        )
+
+        # default to "just after whatever's selected", so the common
+        # case (select a layer, add a similar one next to it) needs no
+        # spinbox fiddling. Only applies when a *top-level* Component is
+        # selected -- Add Component always targets the top level, so a
+        # selection nested inside a Stack has no directly-usable
+        # position here; leave the default at 0 and let the spinbox
+        # speak for itself.
+        default_position = 0
+        selected_obj = self.tree_model.object_for_index(current)
+        if selected_obj is not None and not isinstance(
+            selected_obj, DataObject
+        ):
+            parent_obj = self.tree_model.object_for_index(
+                self.tree_model.parent(current)
+            )
+            if isinstance(parent_obj, DataObject):
+                default_position = current.row() + 1
+
+        dialog = AddComponentDialog(
+            self.datastore,
+            default_dataset=default_dataset_name,
+            default_position=default_position,
+            parent=self,
+        )
+        if not dialog.exec():
+            return
+
+        data_object = self.datastore[dialog.dataset_name()]
+        component = default_component(dialog.kind())
+
+        try:
+            self.tree_model.insert_component(
+                data_object, dialog.position(), component
+            )
+        except StructureEditError as e:
+            self.msg(str(e))
+            return
+
+        self.msg(
+            f"Added a {dialog.kind()} to {data_object.name} at "
+            f"position {dialog.position()}"
+        )
+
+    def on_remove_component_triggered(self):
+        index = self.tree_view.currentIndex()
+        obj = self.tree_model.object_for_index(index)
+        if obj is None or isinstance(obj, DataObject):
+            self.msg("Select a Component (not a dataset) to remove.")
+            return
+
+        try:
+            removed = self.tree_model.remove_component(index)
+        except StructureEditError as e:
+            self.msg(str(e))
+            return
+
+        removed_parameters = list(removed.parameters.flattened())
+        unlinked = unlink_dependents(self.datastore, removed_parameters)
+
+        name = getattr(removed, "name", None) or type(removed).__name__
+        if unlinked:
+            self.msg(
+                f"Removed {name}; unlinked {len(unlinked)} dependent "
+                f"parameter(s) elsewhere."
+            )
+        else:
+            self.msg(f"Removed {name}")
 
     def on_tree_selection(self, current, previous):
         """Doesn't filter the table -- everything stays visible, since

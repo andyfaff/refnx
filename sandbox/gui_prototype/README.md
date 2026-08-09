@@ -53,6 +53,26 @@ currently-unchecked dataset just means checking it first.
   from, so cross-dataset linking falls out of the flat-table design for
   free rather than needing special-case code. `link()`/`unlink()`
   constrain a set of selected rows to the first one.
+
+  `DataStoreTreeModel` also owns structural editing of a Structure:
+  `insert_component()`, `remove_component()`, `move_component()`, plus
+  drag-and-drop (`mimeData()`/`dropMimeData()`) for reordering top-level
+  Components by dragging them in the tree. All three funnel through one
+  `_check_boundary()` check (a Structure's first and last Component must
+  be a `Slab`; a nested `Stack` has no such rule) rather than
+  reimplementing that rule three times. The drag-and-drop implementation
+  deliberately doesn't serialise row-index *paths* into the dragged MIME
+  data the way `treeview_gui_model.dropMimeData` does today — that's
+  brittle if the tree's shape changes between drag-start and drop.
+  Since the drag and the drop happen inside the same running model
+  instance, it just remembers the live `Component` object being dragged
+  as a plain attribute instead, so a move is always resolved against
+  current, valid state. `models.unlink_dependents(datastore,
+  removed_parameters)` is a free function, not a method on
+  `ParameterTableModel`, because it has to search *every* dataset for a
+  dependent parameter, including ones currently hidden by an unchecked
+  fit-inclusion box — `ParameterTableModel` only ever knows about
+  checked datasets.
 - **`controllers.py`** — `FitController`, a reusable `QObject` wrapping
   `CurveFitter` on a background `QThread`. Properly async
   (`started`/`progress`/`finished` signals) — no nested `QEventLoop`,
@@ -75,35 +95,62 @@ currently-unchecked dataset just means checking it first.
   `PchipInterpolator` holds a stale module reference, taking the console
   history down with it even though that has nothing to do with the
   spline.
+- **`dialogs.py`** — `AddComponentDialog` (pick a dataset, a Component
+  type, and a position) and `default_component(kind)`. Doesn't have
+  per-type parameter-entry fields — a real `LipidLeaflet` needs nine
+  required numbers, `Spline` needs knot arrays, and replicating the
+  production app's dedicated `LipidLeafletDialog`/`SplineDialog` is a
+  separate, larger piece of work. Instead it builds the Component with
+  reasonable placeholder values, adds it, and lets you edit every one of
+  those values afterward through the ordinary parameter table — since
+  that table is generic (it just flattens whatever `.parameters` a
+  Component happens to expose), no bespoke editing UI is needed once the
+  object exists, only a bespoke *constructor* for the ones that need it.
 - **`main.py`** — wires it all into a `QMainWindow`: dataset tree
-  (top-left, checkboxes control fit inclusion) drives highlighting in
-  the parameter table (bottom-left, always shows everything — select
-  rows across datasets and hit **Link Selected**), reflectivity and SLD
-  plots overlaying every dataset (right), a Fit button that builds a
-  `GlobalObjective` from whichever datasets are checked and runs DE on a
-  background thread. Starts up with two datasets (`e361r.txt` and
-  `e365r.txt` from `refnx.analysis.tests`) so multi-dataset behaviour is
-  visible immediately. **File** menu: *Load Data...* (adds one or more
-  new datasets — doesn't replace what's already loaded — each starting
-  from a copy of the currently-selected dataset's model, or a bare
-  default if none is selected), *Load Model...* / *Save Model...*
-  (apply to whichever dataset is currently selected in the tree),
-  *Remove Selected Dataset*.
+  (top-left, checkboxes control fit inclusion, drag Components to
+  reorder them) drives highlighting in the parameter table (bottom-left,
+  always shows everything — select rows across datasets and hit **Link
+  Selected**), reflectivity and SLD plots overlaying every dataset
+  (right), a Fit button that builds a `GlobalObjective` from whichever
+  datasets are checked and runs DE on a background thread. Starts up
+  with two datasets (`e361r.txt` and `e365r.txt` from
+  `refnx.analysis.tests`) so multi-dataset behaviour is visible
+  immediately. **File** menu: *Load Data...* (adds one or more new
+  datasets — doesn't replace what's already loaded — each starting from
+  a copy of the currently-selected dataset's model, or a bare default if
+  none is selected), *Load Model...* / *Save Model...* (apply to
+  whichever dataset is currently selected in the tree), *Remove Selected
+  Dataset*. **Structure** menu: *Add Component...* (choose dataset, type,
+  and position — a `QSpinBox`, not just "append"), *Remove Selected
+  Component* (also unlinks any parameter, anywhere, that depended on
+  something in the removed Component, via `unlink_dependents`).
+  `on_structure_changed`, connected to `DataStoreTreeModel.modelReset`,
+  is what refreshes the parameter table and plots after *any* structural
+  edit — add, remove, or a drag-and-drop reorder — without each of those
+  three call sites needing to remember to do it themselves.
 
 ## What's deliberately not here
 
-No MCMC, no drag-and-drop layer reordering, no lipid/spline component
-editors, no undo, no session save/restore UI even though
-`persistence.py` supports it, no per-dataset visibility toggle separate
-from fit-inclusion (checking a dataset plots it, fits it, *and* shows
-its parameters in the table -- deliberately, per feedback while building
-this: the production app treats "visible on the plot" and "currently
-fitting" as separate concerns, but here a single checkbox controls
-plot/fit/table visibility together. Splitting them back out into
-independent toggles is a reasonable next step if "shown but not fitted"
-turns out to matter in practice).
-The point was to prove out the model-splitting, multi-dataset, and
-threading ideas cheaply, not to rebuild the whole app.
+No MCMC, no dedicated LipidLeaflet/Spline parameter-entry dialogs (see
+`dialogs.py` above — you can still add either, just with placeholder
+values you then edit in the table), no undo, no session save/restore UI
+even though `persistence.py` supports it, no per-dataset visibility
+toggle separate from fit-inclusion (checking a dataset plots it, fits
+it, *and* shows its parameters in the table -- deliberately, per
+feedback while building this: the production app treats "visible on the
+plot" and "currently fitting" as separate concerns, but here a single
+checkbox controls plot/fit/table visibility together. Splitting them
+back out into independent toggles is a reasonable next step if "shown
+but not fitted" turns out to matter in practice). Drag-and-drop
+reordering only works on *top-level* Components of a Structure, not
+ones nested inside a `Stack` -- *removing* a nested Component does work
+(via the same "Remove Selected Component" action; the Slab-boundary
+rule just doesn't apply there, since Stacks don't require one at either
+end), but there's no way to drag one, or to move a Component between
+datasets, or into/out of a Stack. The point was to prove out the
+model-splitting,
+multi-dataset, structural-editing, and threading ideas cheaply, not to
+rebuild the whole app.
 
 ## Running it
 
@@ -140,7 +187,28 @@ actually work, not just compile:
   others untouched;
 - removing a dataset actually removes it from the tree and table.
 
+`test_structure_editing.py` covers Add/Remove/reorder Component:
+
+- adding a Component through the (faked, non-modal) dialog inserts it
+  at the chosen position and the parameter table picks up its
+  parameters automatically, with no explicit refresh call in the
+  handler -- proving the `modelReset` → `on_structure_changed` cascade
+  actually does its job;
+- adding a non-`Slab` Component at position 0 is rejected and the
+  Structure is left untouched;
+- removing a Component works, is refused when a dataset row (not a
+  Component) is selected, and unlinks a dependent parameter in a
+  *different* dataset;
+- a drag-and-drop reorder (driven directly through
+  `mimeData()`/`dropMimeData()`, since simulating real mouse-drag events
+  isn't practical headless) produces the expected new order and
+  triggers the same table/plot refresh;
+- a reorder that would put a non-`Slab` first or last is rejected
+  (`dropMimeData` returns `False`, order unchanged);
+- a Component nested inside a `Stack` can't be dragged at all
+  (`mimeData()` returns `None` for it).
+
 ```bash
 pip install pytest-qt   # if not already installed
-QT_QPA_PLATFORM=offscreen python3 -m pytest sandbox/gui_prototype/test_prototype.py -v
+QT_QPA_PLATFORM=offscreen python3 -m pytest sandbox/gui_prototype/ -v
 ```
