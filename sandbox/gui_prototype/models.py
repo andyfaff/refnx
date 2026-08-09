@@ -134,6 +134,17 @@ def _component_properties(component):
     return []
 
 
+def _own_parameters(component):
+    """A Component's own Parameters, not counting anything nested
+    inside it -- a Stack's own Parameter is just `repeats`, since its
+    children's parameters get grouped separately wherever this is used
+    (ParameterTableModel's tree, and the structural addressing below),
+    rather than being flattened in alongside it."""
+    if isinstance(component, Stack):
+        return [component.repeats]
+    return component.parameters.flattened()
+
+
 class StructureEditError(Exception):
     """Raised when an add/remove/move would leave a top-level Structure
     without a Slab as its first and/or last Component."""
@@ -583,15 +594,7 @@ class ParameterTableModel(QtCore.QAbstractItemModel):
         )
         parent_node.children.append(comp_node)
 
-        # a Stack's own Parameter is just `repeats` -- its children get
-        # their own nested group below, rather than being flattened in
-        # here, so expand/collapse can tell them apart
-        own_params = (
-            [component.repeats]
-            if isinstance(component, Stack)
-            else component.parameters.flattened()
-        )
-        for p in own_params:
+        for p in _own_parameters(component):
             if p in hidden:
                 continue
             self._add_leaf(comp_node, p, dataset_name)
@@ -909,3 +912,86 @@ def unlink_dependents(datastore, removed_parameters):
                 p.constraint = None
                 unlinked.append(p)
     return unlinked
+
+
+def same_model_shape(data_objects):
+    """Whether every DataObject's model has the same number of
+    top-level Components and the same total parameter count -- the
+    "same model" precondition equivalent_parameter() assumes, checked
+    up front so linking fails with one clear message instead of
+    silently linking the wrong thing. Mirrors the production app's
+    link_equivalent_action / is_same_structure check."""
+    data_objects = list(data_objects)
+    ncomponents = {len(do.model.structure) for do in data_objects}
+    nparams = {
+        len(list(do.model.parameters.flattened())) for do in data_objects
+    }
+    return len(ncomponents) <= 1 and len(nparams) <= 1
+
+
+def _dataset_parameter_addresses(data_object):
+    """Maps every Parameter/ComponentProperty in `data_object.model` to
+    an address describing its position *structurally* -- which
+    top-level Component (recursing into Stacks) and which of that
+    Component's own parameters/properties -- rather than by row number,
+    so equivalent_parameter() can look the same address up on a
+    different dataset assumed to have the same model shape.
+    """
+    model = data_object.model
+    addresses = {}
+    for i, p in enumerate((model.scale, model.bkg, model.dq, model.q_offset)):
+        addresses[p] = ("model", i)
+
+    def walk(component, path):
+        for i, p in enumerate(_own_parameters(component)):
+            addresses[p] = ("component", path, "parameter", i)
+        for i, prop in enumerate(_component_properties(component)):
+            addresses[prop] = ("component", path, "property", i)
+        if isinstance(component, Stack):
+            for i, child in enumerate(component):
+                walk(child, path + (i,))
+
+    for i, component in enumerate(model.structure):
+        walk(component, (i,))
+
+    return addresses
+
+
+def _component_at_path(data_object, path):
+    component = data_object.model.structure[path[0]]
+    for i in path[1:]:
+        component = component[i]
+    return component
+
+
+def equivalent_parameter(source_data_object, parameter, target_data_object):
+    """The Parameter/ComponentProperty in `target_data_object.model`
+    occupying the same structural position as `parameter` does in
+    `source_data_object.model` -- assumes the two models have the same
+    shape (see same_model_shape()). Returns None if `parameter` isn't
+    found in the source, or if the target has nothing at that address
+    (a real shape mismatch that same_model_shape's cheap count check
+    didn't catch)."""
+    address = _dataset_parameter_addresses(source_data_object).get(parameter)
+    if address is None:
+        return None
+
+    if address[0] == "model":
+        _, i = address
+        model = target_data_object.model
+        return (model.scale, model.bkg, model.dq, model.q_offset)[i]
+
+    _, path, kind, i = address
+    try:
+        component = _component_at_path(target_data_object, path)
+    except (IndexError, TypeError):
+        return None
+
+    candidates = (
+        _own_parameters(component)
+        if kind == "parameter"
+        else _component_properties(component)
+    )
+    if i >= len(candidates):
+        return None
+    return candidates[i]

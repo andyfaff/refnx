@@ -184,8 +184,8 @@ list.
   reorder them) drives expanding and highlighting rows in the parameter
   tree (bottom-left, grouped by Component and collapsible per group,
   always shows everything for every checked dataset — select rows across
-  groups and datasets and hit **Link Selected**/**Unlink
-  Selected**/**Auto Limits**), reflectivity and SLD
+  groups and datasets and use **Link Selected**/**Unlink Selected**/**Link
+  Equivalent Parameters...** to constrain them), reflectivity and SLD
   plots overlaying every dataset (right), a Fit button that builds a
   `GlobalObjective` from whichever datasets are checked and runs DE on a
   background thread — first checking that every varying parameter in
@@ -202,10 +202,39 @@ list.
   and position — a `QSpinBox`, not just "append"), *Remove Selected
   Component* (also unlinks any parameter, anywhere, that depended on
   something in the removed Component, via `unlink_dependents`).
+  **Parameters** menu: *Link Selected Parameters* (`Ctrl+1`), *Unlink
+  Selected Parameters* (`Ctrl+2`) — plain menu actions now, not buttons,
+  same shortcuts as the production app — and *Link Equivalent
+  Parameters...* (`Ctrl+3`, see below).
   `on_structure_changed`, connected to `DataStoreTreeModel.modelReset`,
   is what refreshes the parameter tree and plots after *any* structural
   edit — add, remove, or a drag-and-drop reorder — without each of those
   three call sites needing to remember to do it themselves.
+
+  *Link Equivalent Parameters...* mirrors the production app's action of
+  the same name: select one or more parameters, pick which other loaded
+  datasets to link across in a checklist dialog
+  (`DatasetMultiSelectDialog`), and it locates the parameter at the same
+  *structural position* in each of them and links everything together —
+  assuming those datasets share the same model shape (same number of
+  Components, same total parameter count; `models.same_model_shape()`
+  checks this up front and refuses with one clear message rather than
+  linking the wrong thing). `models.equivalent_parameter(source,
+  parameter, target)` does the actual lookup: it builds an address for
+  `parameter` — which top-level Component (recursing into `Stack`s) and
+  which of that Component's own parameters/properties — via
+  `_dataset_parameter_addresses()`, then resolves that same address
+  against the target dataset. Deliberately structural rather than
+  positional-in-the-visible-tree, so it's unaffected by which rows
+  `_boundary_slab_hidden_parameters()` happens to be hiding. Matches the
+  production app's actual (slightly surprising) semantics exactly:
+  *every* selected parameter, plus every equivalent found for each of
+  them, all end up constrained to one master — the first selected
+  parameter — rather than each selected parameter getting its own
+  independent link group. Select parameters representing the same
+  physical quantity (that's the intended use), and this is exactly what
+  you want; select two different quantities in one go and they'll get
+  linked to *each other* too, same as production.
 
   Right-clicking the tree shows a context menu with **Copy a model to
   here** — deliberately matching the production app's
@@ -346,6 +375,27 @@ actually work, not just compile:
   another `Slab` — the boundary Slabs are pinned, not just type-checked;
 - a Component nested inside a `Stack` can't be dragged at all
   (`mimeData()` returns `None` for it).
+
+`test_link_equivalent.py` covers Link Equivalent Parameters:
+
+- `equivalent_parameter()` finds the matching Parameter by structural
+  position across two same-shape datasets (both a Component parameter
+  and a top-level model parameter like `bkg`), and returns `None` for a
+  `Parameter` that isn't part of either model at all;
+- `same_model_shape()` catches a Component-count mismatch;
+- selecting a parameter, picking a target dataset in the (faked,
+  non-modal) checklist dialog, and triggering the action links the
+  selected parameter to its equivalent in the target;
+- a pre-existing constraint on the about-to-become-master parameter is
+  cleared first, avoiding constraint recursion;
+- mismatched model shapes refuse with a message and link nothing;
+- no selection, or only one dataset loaded, refuses before even opening
+  the dataset picker;
+- a `ComponentProperty` row in the selection is skipped rather than
+  crashing, same as ordinary Link Selected;
+- the **Parameters** menu has all three actions with the right
+  `Ctrl+1`/`Ctrl+2`/`Ctrl+3` shortcuts, and Link/Unlink Selected still
+  work the same as before now that they're actions instead of buttons.
 
 ```bash
 pip install pytest-qt   # if not already installed

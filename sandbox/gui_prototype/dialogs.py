@@ -110,3 +110,34 @@ class AddComponentDialog(QtWidgets.QDialog):
 
     def position(self):
         return self.position_spin.value()
+
+
+class DatasetMultiSelectDialog(QtWidgets.QDialog):
+    """Pick any number of datasets by name -- used by "Link Equivalent
+    Parameters" to choose which other datasets to link across, mirroring
+    the production app's DataObjectSelectorDialog (a checkable list),
+    just without that dialog's dedicated widget class."""
+
+    def __init__(self, names, title="Select datasets", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+
+        self.list_widget = QtWidgets.QListWidget()
+        self.list_widget.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.MultiSelection
+        )
+        self.list_widget.addItems(names)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.list_widget)
+        layout.addWidget(buttons)
+
+    def selected_names(self):
+        return [item.text() for item in self.list_widget.selectedItems()]

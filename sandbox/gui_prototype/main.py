@@ -25,24 +25,30 @@ from importlib import resources
 
 import numpy as np
 
-from qtpy import QtWidgets, QtCore
+from qtpy import QtWidgets, QtGui, QtCore
 from qtpy.compat import getopenfilename, getopenfilenames, getsavefilename
 
 import refnx.analysis
 from refnx.dataset import ReflectDataset
 from refnx.reflect import SLD, ReflectModel
-from refnx.analysis import Objective, GlobalObjective
+from refnx.analysis import Objective, GlobalObjective, Parameter
 
 from datastore import DataObject, DataStore
 from models import (
     DataStoreTreeModel,
     ParameterTableModel,
     StructureEditError,
+    equivalent_parameter,
+    same_model_shape,
     unlink_dependents,
 )
 from controllers import FitController
 from plotting import PlotController
-from dialogs import AddComponentDialog, default_component
+from dialogs import (
+    AddComponentDialog,
+    DatasetMultiSelectDialog,
+    default_component,
+)
 import persistence
 
 
@@ -145,10 +151,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table_view.expandAll()
         self.parameter_model.dataChanged.connect(self.on_parameter_changed)
 
-        self.link_button = QtWidgets.QPushButton("Link Selected")
-        self.link_button.clicked.connect(self.on_link_clicked)
-        self.unlink_button = QtWidgets.QPushButton("Unlink Selected")
-        self.unlink_button.clicked.connect(self.on_unlink_clicked)
+        # Link/Unlink Selected and Link Equivalent Parameters are
+        # actions now (see _build_menus), not buttons -- Ctrl+1/2/3,
+        # matching the production app's shortcuts exactly
         self.auto_limits_button = QtWidgets.QPushButton("Auto Limits")
         self.auto_limits_button.setToolTip(
             "Set bounds on every varying parameter to [0, 2x value] "
@@ -156,8 +161,6 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.auto_limits_button.clicked.connect(self.on_auto_limits_clicked)
         link_row = QtWidgets.QHBoxLayout()
-        link_row.addWidget(self.link_button)
-        link_row.addWidget(self.unlink_button)
         link_row.addWidget(self.auto_limits_button)
 
         left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -222,6 +225,24 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         remove_component_action.triggered.connect(
             self.on_remove_component_triggered
+        )
+
+        parameters_menu = self.menuBar().addMenu("&Parameters")
+
+        link_action = parameters_menu.addAction("Link Selected Parameters")
+        link_action.setShortcut(QtGui.QKeySequence("Ctrl+1"))
+        link_action.triggered.connect(self.on_link_clicked)
+
+        unlink_action = parameters_menu.addAction("Unlink Selected Parameters")
+        unlink_action.setShortcut(QtGui.QKeySequence("Ctrl+2"))
+        unlink_action.triggered.connect(self.on_unlink_clicked)
+
+        link_equivalent_action = parameters_menu.addAction(
+            "Link Equivalent Parameters..."
+        )
+        link_equivalent_action.setShortcut(QtGui.QKeySequence("Ctrl+3"))
+        link_equivalent_action.triggered.connect(
+            self.on_link_equivalent_triggered
         )
 
     def msg(self, text, timeout=8000):
@@ -591,6 +612,93 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.parameter_model.unlink(indexes)
         self.plot_controller.update(self.datastore)
+
+    def on_link_equivalent_triggered(self):
+        """Mirrors the production app's Link Equivalent Parameters
+        (Ctrl+3): link every currently-selected parameter to the
+        parameter occupying the *same structural position* in each of
+        a chosen set of other datasets -- assumes those datasets share
+        the same model shape. Every selected parameter, plus every
+        equivalent found for it, ends up constrained to a single
+        master (the first selected parameter) -- same flattening the
+        production app does, so selecting parameters that represent
+        genuinely different physical quantities in one go will link
+        them to each other too, not just to their own equivalents."""
+        indexes = self._selected_table_rows()
+        par_nodes = [
+            idx.internalPointer()
+            for idx in indexes
+            if isinstance(self.parameter_model.parameter_at(idx), Parameter)
+        ]
+        if not par_nodes:
+            self.msg("Select one or more parameters in the tree first.")
+            return
+
+        if len(self.datastore) < 2:
+            self.msg("Load at least one more dataset to link across.")
+            return
+
+        dialog = DatasetMultiSelectDialog(
+            self.datastore.names,
+            title="Select equivalent datasets to link",
+            parent=self,
+        )
+        if not dialog.exec():
+            return
+        target_names = dialog.selected_names()
+        if not target_names:
+            self.msg(
+                "Select at least one dataset to link equivalent "
+                "parameters to."
+            )
+            return
+        target_data_objects = [self.datastore[n] for n in target_names]
+
+        source_data_objects = {
+            node.dataset_name: self.datastore[node.dataset_name]
+            for node in par_nodes
+        }
+        if not same_model_shape(
+            list(source_data_objects.values()) + target_data_objects
+        ):
+            self.msg(
+                "All models must have the same number of Components and "
+                "parameters for equivalent linking -- no linking done."
+            )
+            return
+
+        to_link = []
+        seen = set()
+        for node in par_nodes:
+            parameter = node.obj
+            if id(parameter) not in seen:
+                seen.add(id(parameter))
+                to_link.append(parameter)
+            source_do = self.datastore[node.dataset_name]
+            for target_do in target_data_objects:
+                equivalent = equivalent_parameter(
+                    source_do, parameter, target_do
+                )
+                if equivalent is not None and id(equivalent) not in seen:
+                    seen.add(id(equivalent))
+                    to_link.append(equivalent)
+
+        if len(to_link) < 2:
+            self.msg("Nothing new to link.")
+            return
+
+        master = to_link[0]
+        master.constraint = None  # avoid recursion if it's already linked
+        for p in to_link[1:]:
+            p.constraint = master
+
+        self.parameter_model.set_datastore(self.datastore)
+        self.table_view.expandAll()
+        self.plot_controller.update(self.datastore)
+        self.msg(
+            f"Linked {len(to_link)} equivalent parameter(s) across "
+            f"{len(target_data_objects)} dataset(s)."
+        )
 
     def on_auto_limits_clicked(self):
         touched = self.parameter_model.auto_limits()
