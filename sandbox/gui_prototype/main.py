@@ -395,6 +395,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tree_view.expandAll()
         self.tree_view.resizeColumnToContents(0)
 
+    def resizeEvent(self, event):
+        # belt-and-suspenders alongside _relayout_central_widget below:
+        # once both left-hand docks are floating, QMainWindowLayout was
+        # observed to stop tracking *further* window resizes altogether
+        # (not just miss the first one right after undocking) --
+        # updateGeometry() alone (only invalidates the cached size
+        # *hint*) wasn't enough to make it recompute; forcing a real
+        # layout pass on every resize, not just on a dock's
+        # topLevelChanged, is what actually keeps the plots in sync
+        # continuously rather than only immediately after undocking.
+        super().resizeEvent(event)
+        self._do_relayout_central_widget()
+
     def _relayout_central_widget(self, floating):
         # queued for the next event-loop tick rather than done inline
         # -- topLevelChanged fires partway through Qt's own dock-float
@@ -404,6 +417,14 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(0, self._do_relayout_central_widget)
 
     def _do_relayout_central_widget(self):
+        layout = self.layout()
+        if layout is not None:
+            # invalidate() + activate() forces Qt to actually redo the
+            # geometry pass right now -- updateGeometry() alone only
+            # marks the cached size *hint* dirty, it doesn't force an
+            # immediate recomputation of who owns how much space.
+            layout.invalidate()
+            layout.activate()
         self.centralWidget().updateGeometry()
 
     def on_structure_changed(self):

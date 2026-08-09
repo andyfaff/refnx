@@ -279,6 +279,33 @@ def test_undocking_triggers_a_central_widget_relayout(qtbot, monkeypatch):
     assert calls == [1, 1]
 
 
+def test_every_window_resize_forces_a_real_layout_pass(qtbot, monkeypatch):
+    # regression test: QMainWindowLayout was observed to stop tracking
+    # *further* window resizes for the central widget once both
+    # left-hand docks were floating -- not just miss the first one
+    # right after undocking, but stay stuck from then on. resizeEvent()
+    # forces layout().invalidate()+activate() on every resize now,
+    # rather than trusting QMainWindowLayout to recompute on its own.
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+    win.show()
+
+    calls = []
+    monkeypatch.setattr(
+        win, "_do_relayout_central_widget", lambda: calls.append(1)
+    )
+
+    win.resize(1000, 700)
+    qtbot.wait(10)
+    assert calls  # at least one relayout forced by the resize itself
+
+    calls.clear()
+    win.resize(800, 600)
+    qtbot.wait(10)
+    assert calls  # and again on a second, independent resize
+
+
 def test_fit_button_lives_in_the_parameters_dock(qtbot):
     # fitting is a parameter-tree action -- the button belongs with the
     # parameters it changes, not with the plots, so it travels with the

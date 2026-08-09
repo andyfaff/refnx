@@ -338,17 +338,25 @@ list.
   isn't a strong enough claim on space for the canvas to reliably fill
   a `QTabWidget` page, especially once undocking a `QDockWidget` frees
   up room elsewhere in the `QMainWindow` that the canvas needs to grow
-  into. That alone wasn't quite enough, either: `QMainWindowLayout`
-  doesn't always recompute how much space the central widget owns the
-  instant a dock's floating state flips, so both docks'
-  `topLevelChanged` are connected to `_relayout_central_widget()`,
-  which nudges `centralWidget().updateGeometry()` on the next event-loop
-  tick (queued via `QTimer.singleShot(0, ...)`, not called inline —
-  `topLevelChanged` fires partway through Qt's own float transition,
-  before `QMainWindowLayout` has necessarily finished reshuffling
-  itself, so asking immediately can still see stale sizes) — without
-  it, the plots could stop tracking further window resizes altogether
-  once both panes were undocked, not just miss the first one. Reflectivity and SLD plots overlaying every dataset (right, and
+  into. That alone wasn't quite enough, either: once both left-hand
+  docks are floating, `QMainWindowLayout` was observed to stop tracking
+  *further* window resizes for the central widget altogether — not
+  just miss the first one right after undocking, but stay stuck from
+  then on, no matter how the window was subsequently resized.
+  `resizeEvent()` is overridden to force a real layout pass
+  (`self.layout().invalidate()` + `.activate()`) on *every* window
+  resize now, not relying on `QMainWindowLayout` to recompute
+  automatically — `updateGeometry()` alone only invalidates the cached
+  size *hint*, it doesn't force an immediate recomputation of who owns
+  how much space, which turned out not to be a strong enough nudge.
+  Both docks' `topLevelChanged` are also connected to
+  `_relayout_central_widget()`, doing the same thing queued for the
+  next event-loop tick (`topLevelChanged` fires partway through Qt's
+  own float transition, before `QMainWindowLayout` has necessarily
+  finished reshuffling itself, so forcing it immediately can still see
+  stale sizes) — belt-and-suspenders alongside the `resizeEvent`
+  override for the specific moment a dock's floating state changes.
+  Reflectivity and SLD plots overlaying every dataset (right, and
   now genuinely filling whatever room they're given), a Fit button — in
   the Parameters dock now, not with the plots, since it's a parameter-
   tree action (which datasets get fitted is read off the Structure
@@ -503,8 +511,9 @@ actually work, not just compile:
   matplotlib's own default), the central widget actually grows into
   the space a floated dock frees up, and — the regression case — it
   keeps tracking *further* window resizes afterward too, not just the
-  first one right after undocking; `topLevelChanged` on either dock is
-  confirmed to trigger the relayout nudge;
+  first one right after undocking; both `topLevelChanged` on either
+  dock, and every ordinary window resize on its own, are confirmed to
+  force a real layout pass;
 - the Fit button lives in the Parameters dock, not the central widget
   with the plots;
 - the Reflectivity and SLD tabs each carry their own matplotlib
