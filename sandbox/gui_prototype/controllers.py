@@ -89,12 +89,26 @@ class FitController(QtCore.QObject):
         self._thread = QtCore.QThread(self)
         self._worker = _FitWorker(objective, method, fit_kws)
         self._worker.moveToThread(self._thread)
+        self._result = {}
+
+        def _capture(exc):
+            self._result["exception"] = exc
 
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self.progress)
-        self._worker.finished.connect(self._on_worker_finished)
+        self._worker.finished.connect(_capture)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
+        # Report "done" only once the QThread has genuinely finished,
+        # not as soon as the worker's callable returns: thread.quit()
+        # (connected above) still has to be delivered to, and processed
+        # by, the worker thread's own event loop before the OS thread
+        # actually exits. Reporting done too early risks a dangling
+        # QThread that's still tearing down when the next fit starts (or
+        # the interpreter exits) -- this exact bug caused a
+        # sequential-fit deadlock in the production app's equivalent
+        # code before an identical fix.
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.finished.connect(self._thread.deleteLater)
 
         self._thread.start()
@@ -104,7 +118,8 @@ class FitController(QtCore.QObject):
         if self._worker is not None:
             self._worker.request_abort()
 
-    def _on_worker_finished(self, exc):
+    def _on_thread_finished(self):
+        exc = self._result.get("exception")
         self._thread = None
         self._worker = None
         self.finished.emit(exc)

@@ -113,6 +113,41 @@ def test_fit_selection_controls_which_datasets_are_fitted(qtbot):
     assert {do.name for do in datastore.fitted_objects()} == {"e361r"}
 
 
+def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    assert win.parameter_model.rowCount() == 48
+
+    e365_index = win.tree_model.index(1, 0)
+    win.tree_model.setData(
+        e365_index,
+        Qt.CheckState.Unchecked.value,
+        Qt.ItemDataRole.CheckStateRole,
+    )
+
+    # e365r's rows should be gone, e361r's should still be there
+    assert win.parameter_model.rowCount() == 24
+    assert {name for name, _ in win.parameter_model._rows} == {"e361r"}
+
+    # a constraint made while it was checked should survive being
+    # unchecked, even though its row is no longer shown
+    thick_e361 = datastore["e361r"].model.structure[-2].thick
+    thick_e365 = datastore["e365r"].model.structure[-2].thick
+    thick_e365.constraint = thick_e361
+    assert thick_e365.constraint is thick_e361
+
+    # re-checking should bring it back
+    win.tree_model.setData(
+        e365_index,
+        Qt.CheckState.Checked.value,
+        Qt.ItemDataRole.CheckStateRole,
+    )
+    assert win.parameter_model.rowCount() == 48
+    assert thick_e365.constraint is thick_e361
+
+
 def test_fit_controller_runs_global_objective_async(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)

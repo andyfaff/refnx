@@ -77,6 +77,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.datastore = datastore
 
         self.tree_model = DataStoreTreeModel(datastore)
+        self.tree_model.dataChanged.connect(self.on_fit_selection_changed)
         self.parameter_model = ParameterTableModel()
         self.parameter_model.set_datastore(datastore)
 
@@ -306,6 +307,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_parameter_changed(self, top_left, bottom_right, roles):
         self.plot_controller.update(self.datastore)
+
+    def on_fit_selection_changed(self, top_left, bottom_right, roles):
+        # a dataset's checkbox was (un)checked -- ParameterTableModel
+        # only shows parameters for currently-checked datasets, so it
+        # needs rebuilding. Cheap enough at this scale to just do it
+        # unconditionally rather than checking whether `roles` was
+        # actually CheckStateRole.
+        self.parameter_model.set_datastore(self.datastore)
 
     def _selected_table_rows(self):
         rows = {idx.row() for idx in self.table_view.selectedIndexes()}

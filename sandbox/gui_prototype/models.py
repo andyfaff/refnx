@@ -152,12 +152,22 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
 
 class ParameterTableModel(QtCore.QAbstractTableModel):
     """
-    One row per Parameter, across every DataObject in the datastore.
-    Editing a value/bound writes straight to the Parameter and emits
-    dataChanged both for the edited cell *and* for every other row whose
-    parameter depends on it -- including rows belonging to a different
-    dataset, since dependency checking only ever looks at Parameter
-    identity, never which dataset a row came from.
+    One row per Parameter, across every DataObject in the datastore
+    that's currently checked for fitting (DataObject.in_fit). Editing a
+    value/bound writes straight to the Parameter and emits dataChanged
+    both for the edited cell *and* for every other row whose parameter
+    depends on it -- including rows belonging to a different dataset,
+    since dependency checking only ever looks at Parameter identity,
+    never which dataset a row came from.
+
+    Unchecking a dataset in the tree hides its parameters here (see
+    main.py's connection from DataStoreTreeModel.dataChanged to
+    set_datastore). A constraint made while a dataset was checked still
+    holds after it's unchecked and its rows disappear -- constraints
+    live on the Parameter objects themselves, not in this model -- so
+    linking across a not-currently-fitted dataset just means checking
+    it, linking, then unchecking again afterwards if you still don't
+    want it included in the fit.
     """
 
     COLUMNS = ("dataset", "name", "value", "vary", "lb", "ub", "constraint")
@@ -181,6 +191,8 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
         self._rows = []
         if datastore is not None:
             for data_object in datastore:
+                if not data_object.in_fit:
+                    continue
                 for p in data_object.model.parameters.flattened():
                     self._rows.append((data_object.name, p))
         self._row_of = {p: i for i, (_, p) in enumerate(self._rows)}

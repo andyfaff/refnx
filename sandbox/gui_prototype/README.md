@@ -27,9 +27,15 @@ filtered the table down to whatever was selected in the tree, which
 turned out to be a real problem, not just a cosmetic tradeoff — you
 can't multi-select two parameters to link them if they're never visible
 at the same time, and linking parameters *across* datasets is a core
-co-refinement workflow. So the table doesn't filter; the tree is purely
-for navigation, structural editing, and picking which datasets to
-overlay-highlight in the table.
+co-refinement workflow. So the table doesn't filter by tree *selection*
+— clicking a tree row highlights the matching table rows without hiding
+any others. It does filter by the tree's fit-inclusion *checkbox*,
+though: unchecking a dataset removes its parameters from the table
+entirely, on the basis that if you're not fitting it right now you
+don't want its rows cluttering the view. A constraint made while a
+dataset was checked survives being unchecked -- constraints live on the
+`Parameter` objects, not in the table -- so linking against a
+currently-unchecked dataset just means checking it first.
 
 - **`datastore.py`** — `DataObject` (name + dataset + model + whether
   it's included in the next fit) and `DataStore` (an ordered collection
@@ -89,9 +95,13 @@ overlay-highlight in the table.
 No MCMC, no drag-and-drop layer reordering, no lipid/spline component
 editors, no undo, no session save/restore UI even though
 `persistence.py` supports it, no per-dataset visibility toggle separate
-from fit-inclusion (checking a dataset both plots it and fits it — the
-production app treats "visible" and "currently fitting" as separate
-concerns, which is a reasonable next thing to add here if it matters).
+from fit-inclusion (checking a dataset plots it, fits it, *and* shows
+its parameters in the table -- deliberately, per feedback while building
+this: the production app treats "visible on the plot" and "currently
+fitting" as separate concerns, but here a single checkbox controls
+plot/fit/table visibility together. Splitting them back out into
+independent toggles is a reasonable next step if "shown but not fitted"
+turns out to matter in practice).
 The point was to prove out the model-splitting, multi-dataset, and
 threading ideas cheaply, not to rebuild the whole app.
 
@@ -116,7 +126,9 @@ actually work, not just compile:
 - linking two parameters *across* datasets works, including dependency
   propagation on edit;
 - unchecking a dataset in the tree removes it from
-  `DataStore.fitted_objects()`;
+  `DataStore.fitted_objects()` *and* hides its rows in the parameter
+  table, and a constraint made before unchecking survives (it lives on
+  the `Parameter`, not the table) and reappears when re-checked;
 - `FitController` runs a `GlobalObjective` built from the checked
   datasets asynchronously, and total chi² drops;
 - Load Data *adds* a dataset rather than replacing the store, and
