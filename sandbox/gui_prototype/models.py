@@ -498,6 +498,44 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
             idx_hi = self.index(row, constraint_col)
             self.dataChanged.emit(idx_lo, idx_hi)
 
+    def auto_limits(self):
+        """
+        Set bounds to [0, 2*value] on every currently-varying parameter
+        (or [2*value, 0] if value is negative -- same shape, just
+        reflected around zero). Mirrors the production app's
+        on_auto_limits_button_clicked exactly, including not
+        special-casing value == 0 (which produces a zero-width [0, 0]
+        bound -- a known quirk of the original heuristic, not something
+        introduced here).
+
+        Applies to every varying parameter currently in the table, i.e.
+        every checked dataset's varying parameters -- not just a
+        selection -- same scope as the production app's button, which
+        acts on "currently fitting" datasets rather than whatever's
+        selected in the tree.
+
+        Returns how many parameters were touched, so the caller can
+        report something more useful than silence if it's zero.
+        """
+        lb_col = self.COLUMNS.index("lb")
+        ub_col = self.COLUMNS.index("ub")
+        touched = 0
+        for row, (_, p) in enumerate(self._rows):
+            if not p.vary:
+                continue
+            val = p.value
+            if val < 0:
+                p.bounds.lb = 2 * val
+                p.bounds.ub = 0
+            else:
+                p.bounds.lb = 0
+                p.bounds.ub = 2 * val
+            touched += 1
+            idx_lo = self.index(row, lb_col)
+            idx_hi = self.index(row, ub_col)
+            self.dataChanged.emit(idx_lo, idx_hi)
+        return touched
+
 
 def unlink_dependents(datastore, removed_parameters):
     """

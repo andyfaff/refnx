@@ -22,6 +22,8 @@ import sys
 from copy import deepcopy
 from importlib import resources
 
+import numpy as np
+
 from qtpy import QtWidgets, QtCore
 from qtpy.compat import getopenfilename, getopenfilenames, getsavefilename
 
@@ -143,9 +145,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.link_button.clicked.connect(self.on_link_clicked)
         self.unlink_button = QtWidgets.QPushButton("Unlink Selected")
         self.unlink_button.clicked.connect(self.on_unlink_clicked)
+        self.auto_limits_button = QtWidgets.QPushButton("Auto Limits")
+        self.auto_limits_button.setToolTip(
+            "Set bounds on every varying parameter to [0, 2x value] "
+            "(reflected around zero if value is negative)."
+        )
+        self.auto_limits_button.clicked.connect(self.on_auto_limits_clicked)
         link_row = QtWidgets.QHBoxLayout()
         link_row.addWidget(self.link_button)
         link_row.addWidget(self.unlink_button)
+        link_row.addWidget(self.auto_limits_button)
 
         left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         left_splitter.addWidget(self.tree_view)
@@ -561,6 +570,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.parameter_model.unlink(rows)
         self.plot_controller.update(self.datastore)
 
+    def on_auto_limits_clicked(self):
+        touched = self.parameter_model.auto_limits()
+        if touched:
+            self.msg(f"Auto-set bounds on {touched} varying parameter(s).")
+        else:
+            self.msg("No varying parameters to set bounds on.")
+
     def on_fit_clicked(self):
         if self.fit_controller.running:
             self.fit_controller.abort()
@@ -579,6 +595,23 @@ class MainWindow(QtWidgets.QMainWindow):
             if len(objectives) == 1
             else GlobalObjective(objectives)
         )
+
+        method = "differential_evolution"
+        if method == "differential_evolution":
+            unbounded = [
+                p
+                for p in objective.varying_parameters()
+                if not (np.isfinite(p.bounds.lb) and np.isfinite(p.bounds.ub))
+            ]
+            if unbounded:
+                unbounded_names = ", ".join(p.name for p in unbounded)
+                self.msg(
+                    "Differential evolution needs finite bounds on every "
+                    f"varying parameter. Missing on: {unbounded_names}. Use Auto "
+                    "Limits, or set bounds manually, then try again."
+                )
+                return
+
         self._fit_objective = objective  # keep alive for the callback
 
         self.fit_button.setText("Abort")
@@ -586,7 +619,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.msg(f"Fitting {names}...")
         self.fit_controller.start(
             objective,
-            method="differential_evolution",
+            method=method,
             maxiter=50,
             popsize=10,
             seed=1,

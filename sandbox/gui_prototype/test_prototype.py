@@ -95,6 +95,55 @@ def test_link_parameters_across_datasets(qtbot):
     assert thick_e365.constraint is None
 
 
+def test_auto_limits_sets_bounds_from_value(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    thick = datastore["e361r"].model.structure[-2].thick  # varying, positive
+    thick.value = 42.0
+
+    sld_real = datastore["e361r"].model.structure[-2].sld.real  # varying
+    sld_real.value = -3.5
+
+    touched = win.parameter_model.auto_limits()
+
+    assert thick.bounds.lb == 0
+    assert thick.bounds.ub == 84.0
+    # negative value -> reversed: [2*value, 0]
+    assert sld_real.bounds.lb == -7.0
+    assert sld_real.bounds.ub == 0
+    assert touched > 0
+
+
+def test_auto_limits_only_touches_varying_parameters(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    fixed = datastore["e361r"].model.structure[1].thick  # not set to vary
+    assert not fixed.vary
+    original_bounds = (fixed.bounds.lb, fixed.bounds.ub)
+
+    win.parameter_model.auto_limits()
+
+    assert (fixed.bounds.lb, fixed.bounds.ub) == original_bounds
+
+
+def test_auto_limits_button_click(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    thick = datastore["e361r"].model.structure[-2].thick
+    thick.value = 42.0
+
+    qtbot.mouseClick(win.auto_limits_button, Qt.MouseButton.LeftButton)
+
+    assert thick.bounds.lb == 0
+    assert thick.bounds.ub == 84.0
+
+
 def test_fit_selection_controls_which_datasets_are_fitted(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
@@ -170,6 +219,37 @@ def test_fit_controller_runs_global_objective_async(qtbot):
     print(f"total chi2 before={before:.4g} after={after:.4g}")
     assert after <= before
     assert win.fit_button.text().startswith("Fit")
+
+
+def test_fit_warns_and_refuses_on_infinite_bounds(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    # a varying parameter with the refnx default (unbounded) bounds
+    thick = datastore["e361r"].model.structure[-2].thick
+    thick.bounds.lb = -float("inf")
+    thick.bounds.ub = float("inf")
+
+    win.on_fit_clicked()
+
+    # should have refused to start -- button never flips to "Abort",
+    # and the controller never actually starts running
+    assert not win.fit_controller.running
+    assert win.fit_button.text().startswith("Fit")
+
+
+def test_fit_proceeds_when_bounds_are_finite(qtbot):
+    # sanity check that the new bounds check doesn't false-positive and
+    # block an otherwise-normal fit (the demo datastore's varying
+    # parameters all have finite bounds already)
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    with qtbot.waitSignal(win.fit_controller.finished, timeout=30000):
+        win.on_fit_clicked()
+        assert win.fit_button.text() == "Abort"
 
 
 def test_load_data_adds_rather_than_replaces(monkeypatch, qtbot):

@@ -52,7 +52,12 @@ currently-unchecked dataset just means checking it first.
   looks at `Parameter` identity, never which dataset a parameter came
   from, so cross-dataset linking falls out of the flat-table design for
   free rather than needing special-case code. `link()`/`unlink()`
-  constrain a set of selected rows to the first one.
+  constrain a set of selected rows to the first one. `auto_limits()`
+  mirrors the production app's "Auto adjust limits" button exactly: on
+  every currently-*varying* parameter, sets bounds to `[0, 2*value]`
+  (or `[2*value, 0]` if `value` is negative — same shape, reflected
+  around zero), including the original's quirk of not special-casing
+  `value == 0` (a zero-width `[0, 0]` bound).
 
   `DataStoreTreeModel` also owns structural editing of a Structure:
   `insert_component()`, `remove_component()`, `move_component()`, plus
@@ -115,12 +120,15 @@ currently-unchecked dataset just means checking it first.
   (top-left, checkboxes control fit inclusion, drag Components to
   reorder them) drives highlighting in the parameter table (bottom-left,
   always shows everything — select rows across datasets and hit **Link
-  Selected**), reflectivity and SLD plots overlaying every dataset
-  (right), a Fit button that builds a `GlobalObjective` from whichever
-  datasets are checked and runs DE on a background thread. Starts up
-  with two datasets (`e361r.txt` and `e365r.txt` from
-  `refnx.analysis.tests`) so multi-dataset behaviour is visible
-  immediately. **File** menu: *Load Data...* (adds one or more new
+  Selected**/**Unlink Selected**/**Auto Limits**), reflectivity and SLD
+  plots overlaying every dataset (right), a Fit button that builds a
+  `GlobalObjective` from whichever datasets are checked and runs DE on a
+  background thread — first checking that every varying parameter in
+  that objective has finite bounds (DE can't work without them), and
+  refusing to start, with a status-bar message naming the offending
+  parameters, if not. Starts up with two datasets (`e361r.txt` and
+  `e365r.txt` from `refnx.analysis.tests`) so multi-dataset behaviour is
+  visible immediately. **File** menu: *Load Data...* (adds one or more new
   datasets — doesn't replace what's already loaded — each starting from
   a copy of the currently-selected dataset's model, or a bare default if
   none is selected), *Load Model...* / *Save Model...* (apply to
@@ -198,6 +206,12 @@ actually work, not just compile:
   design actually holds;
 - linking two parameters *across* datasets works, including dependency
   propagation on edit;
+- Auto Limits sets `[0, 2*value]` (or reflected, for a negative value)
+  on every *varying* parameter and leaves fixed ones alone, both called
+  directly and through an actual button click;
+- Fit refuses to start, and never touches `FitController`, if any
+  varying parameter has a non-finite bound — and doesn't false-positive
+  on the demo datastore's already-finite bounds;
 - unchecking a dataset in the tree removes it from
   `DataStore.fitted_objects()` *and* hides its rows in the parameter
   table, and a constraint made before unchecking survives (it lives on
