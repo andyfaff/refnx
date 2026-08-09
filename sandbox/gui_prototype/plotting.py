@@ -20,6 +20,8 @@ cases. At this scale (a handful of datasets, no per-frame dragging) the
 extra draw cost doesn't matter.
 """
 
+from qtpy.QtWidgets import QSizePolicy
+
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import (
     NavigationToolbar2QT as NavigationToolbar,
@@ -38,6 +40,18 @@ class PlotController:
         self.sld_canvas = FigureCanvas(self.sld_fig)
         self.sld_ax = self.sld_fig.add_subplot(111)
         self.sld_toolbar = NavigationToolbar(self.sld_canvas)
+
+        # FigureCanvasQTAgg defaults to a Preferred size policy, not
+        # Expanding -- Preferred only grows past its size *hint* when a
+        # layout has nothing better to do with the space, which isn't
+        # a strong enough claim in a QTabWidget/QVBoxLayout stack for
+        # the canvas to reliably fill whatever room the tab actually
+        # has (e.g. after undocking a QDockWidget frees up space
+        # elsewhere in the QMainWindow). Expanding makes that explicit.
+        for canvas in (self.reflectivity_canvas, self.sld_canvas):
+            canvas.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            )
 
         self._reset_axes()
 

@@ -322,12 +322,38 @@ list.
   them, so left alone every column (Name, Value, `σ`, Lower, Upper)
   shows up truncated on every launch, needing a manual drag to widen
   each one every single time. Sizing the columns to content isn't
-  enough on its own, though — Qt's default splitter split is based on
-  each side's size *hint*, which still leaves the whole left pane
-  cramped regardless of what's inside it, so `main_splitter.setSizes()`
-  starts it off noticeably wider than an even split too. Reflectivity and SLD
-  plots overlaying every dataset (right), a Fit button that builds a
-  `GlobalObjective` from whichever datasets are checked and runs DE on a
+  enough on its own, though — Qt's default dock sizing is based on each
+  pane's size *hint*, which still leaves them cramped regardless of
+  what's inside them, so `resizeDocks()` starts both noticeably wider
+  than that. `structure_dock`/`parameters_dock` are real `QDockWidget`s
+  (`LeftDockWidgetArea`, stacked via `splitDockWidget`), not a fixed
+  `QSplitter` panel — each can be dragged out into its own floating
+  window, moved to a different edge, or tabified with the other,
+  independently of the plots and of each other; a splitter panel can
+  never float loose of the main window at all. The plot tabs are the
+  entire central widget (nothing else shares space with them now that
+  the Fit button has moved into the Parameters dock, see below) —
+  `PlotController` sets both canvases' size policy to `Expanding`
+  explicitly, since `FigureCanvasQTAgg` defaults to `Preferred`, which
+  isn't a strong enough claim on space for the canvas to reliably fill
+  a `QTabWidget` page, especially once undocking a `QDockWidget` frees
+  up room elsewhere in the `QMainWindow` that the canvas needs to grow
+  into. That alone wasn't quite enough, either: `QMainWindowLayout`
+  doesn't always recompute how much space the central widget owns the
+  instant a dock's floating state flips, so both docks'
+  `topLevelChanged` are connected to `_relayout_central_widget()`,
+  which nudges `centralWidget().updateGeometry()` on the next event-loop
+  tick (queued via `QTimer.singleShot(0, ...)`, not called inline —
+  `topLevelChanged` fires partway through Qt's own float transition,
+  before `QMainWindowLayout` has necessarily finished reshuffling
+  itself, so asking immediately can still see stale sizes) — without
+  it, the plots could stop tracking further window resizes altogether
+  once both panes were undocked, not just miss the first one. Reflectivity and SLD plots overlaying every dataset (right, and
+  now genuinely filling whatever room they're given), a Fit button — in
+  the Parameters dock now, not with the plots, since it's a parameter-
+  tree action (which datasets get fitted is read off the Structure
+  dock's checkboxes, but the button changes the *parameters*) — that
+  builds a `GlobalObjective` from whichever datasets are checked and runs DE on a
   background thread — first checking that every varying parameter in
   that objective has finite bounds (DE can't work without them), and
   refusing to start, with a status-bar message naming the offending
@@ -469,8 +495,18 @@ actually work, not just compile:
 - every parameter tree column but the last (which stretches) gets sized
   to fit its content on startup, rather than sitting at Qt's default
   fixed width;
-- the left pane starts out noticeably wider than an even split, not
-  just at Qt's size-hint-driven default;
+- both left-hand panes are real `QDockWidget`s in the left dock area,
+  wired to the right widget, wide of Qt's size-hint-driven default —
+  and floating one (undocking it) actually works and leaves the other
+  docked, not just a feature flag being set;
+- the plot canvases carry an `Expanding` size policy (not `Preferred`,
+  matplotlib's own default), the central widget actually grows into
+  the space a floated dock frees up, and — the regression case — it
+  keeps tracking *further* window resizes afterward too, not just the
+  first one right after undocking; `topLevelChanged` on either dock is
+  confirmed to trigger the relayout nudge;
+- the Fit button lives in the Parameters dock, not the central widget
+  with the plots;
 - the Reflectivity and SLD tabs each carry their own matplotlib
   `NavigationToolbar2QT`, wired to the right canvas and actually
   parented into the window, not just constructed and discarded;

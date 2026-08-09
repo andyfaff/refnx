@@ -190,16 +190,71 @@ class MainWindow(QtWidgets.QMainWindow):
         link_row = QtWidgets.QHBoxLayout()
         link_row.addWidget(self.auto_limits_button)
 
-        left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        left_splitter.addWidget(self.tree_view)
+        # lives in the Parameters dock, not alongside the plots -- it's
+        # a parameter-tree action (which datasets get fitted is read
+        # straight off the Structure dock's checkboxes, but the
+        # button itself belongs with the parameters it changes)
+        self.fit_button = QtWidgets.QPushButton(
+            "Fit checked datasets (differential evolution)"
+        )
+        self.fit_button.clicked.connect(self.on_fit_clicked)
 
         table_container = QtWidgets.QWidget()
         table_layout = QtWidgets.QVBoxLayout(table_container)
         table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.addWidget(self.table_view)
         table_layout.addLayout(link_row)
-        left_splitter.addWidget(table_container)
-        left_splitter.setStretchFactor(1, 1)
+        table_layout.addWidget(self.fit_button)
+
+        # QDockWidgets, not a fixed QSplitter panel -- each of the two
+        # left-hand panes can be dragged out into its own floating
+        # window, dragged to a different edge of the main window, or
+        # tabified with the other, independently of the plots. Qt's
+        # own dock machinery (not a splitter) is what makes any of
+        # that possible; a QSplitter panel never floats loose.
+        self.structure_dock = QtWidgets.QDockWidget("Structure", self)
+        self.structure_dock.setObjectName("structure_dock")
+        self.structure_dock.setWidget(self.tree_view)
+        self.addDockWidget(
+            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.structure_dock
+        )
+
+        self.parameters_dock = QtWidgets.QDockWidget("Parameters", self)
+        self.parameters_dock.setObjectName("parameters_dock")
+        self.parameters_dock.setWidget(table_container)
+        self.addDockWidget(
+            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.parameters_dock
+        )
+        # stack Parameters below Structure in the left dock area, same
+        # top-to-bottom order the old fixed splitter panel had
+        self.splitDockWidget(
+            self.structure_dock,
+            self.parameters_dock,
+            QtCore.Qt.Orientation.Vertical,
+        )
+        # QMainWindowLayout doesn't always recompute how much space the
+        # central widget owns the instant a dock's floating state
+        # flips -- undocking (or redocking) can leave the plots either
+        # not reclaiming the freed space, or not giving it back,
+        # rather than continuously tracking window resizes the way
+        # they should from then on. Nudging a relayout on the next
+        # event-loop tick, every time either dock's floating state
+        # changes, is the standard workaround.
+        self.structure_dock.topLevelChanged.connect(
+            self._relayout_central_widget
+        )
+        self.parameters_dock.topLevelChanged.connect(
+            self._relayout_central_widget
+        )
+        # Qt's default dock sizing is based on each pane's size hint,
+        # which leaves them cramped even though their content (once
+        # columns are auto-sized to fit, see _refresh_parameter_tree_view)
+        # genuinely needs more room -- start noticeably wider than that.
+        self.resizeDocks(
+            [self.structure_dock, self.parameters_dock],
+            [500, 500],
+            QtCore.Qt.Orientation.Horizontal,
+        )
 
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(
@@ -217,28 +272,11 @@ class MainWindow(QtWidgets.QMainWindow):
             "SLD",
         )
 
-        main_splitter = QtWidgets.QSplitter()
-        main_splitter.addWidget(left_splitter)
-        main_splitter.addWidget(tabs)
-        main_splitter.setStretchFactor(1, 1)
-        # Qt's default splitter split is based on each side's size
-        # hint, which leaves the tree/parameter panes cramped even
-        # though their content (once columns are auto-sized to fit,
-        # see _refresh_parameter_tree_view) genuinely needs more room
-        # -- start with a much wider left pane instead of a bare
-        # roughly-even split.
-        main_splitter.setSizes([500, 700])
-
-        self.fit_button = QtWidgets.QPushButton(
-            "Fit checked datasets (differential evolution)"
-        )
-        self.fit_button.clicked.connect(self.on_fit_clicked)
-
-        central = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(central)
-        layout.addWidget(main_splitter)
-        layout.addWidget(self.fit_button)
-        self.setCentralWidget(central)
+        # tabs is the whole central widget now -- nothing else needs
+        # to share space with it, so it gets the entirety of whatever
+        # room the QMainWindow layout leaves once dock widgets (and
+        # any that get undocked) are accounted for
+        self.setCentralWidget(tabs)
 
         self.setStatusBar(QtWidgets.QStatusBar())
 
@@ -356,6 +394,17 @@ class MainWindow(QtWidgets.QMainWindow):
         after it instead."""
         self.tree_view.expandAll()
         self.tree_view.resizeColumnToContents(0)
+
+    def _relayout_central_widget(self, floating):
+        # queued for the next event-loop tick rather than done inline
+        # -- topLevelChanged fires partway through Qt's own dock-float
+        # transition, before it's necessarily finished reshuffling the
+        # QMainWindowLayout itself, so asking for updated geometry
+        # immediately can still see stale sizes
+        QtCore.QTimer.singleShot(0, self._do_relayout_central_widget)
+
+    def _do_relayout_central_widget(self):
+        self.centralWidget().updateGeometry()
 
     def on_structure_changed(self):
         self._refresh_navigation_tree_view()

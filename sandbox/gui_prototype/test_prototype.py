@@ -132,11 +132,49 @@ def test_navigation_tree_dataset_column_sized_to_content_on_startup(
     assert tree_resized == [0]  # chi2 (the last column) stretches instead
 
 
-def test_left_pane_starts_wider_than_the_plots(qtbot):
-    # Qt's default splitter split is based on each side's size hint,
-    # which leaves the tree/parameter panes cramped even once their
-    # columns are auto-sized to fit -- the split itself needs to start
-    # off wider, not just the columns within it
+def test_left_panes_are_independently_dockable(qtbot):
+    # each left-hand pane is a real QDockWidget, not a fixed splitter
+    # panel -- a splitter panel can never float loose of the main
+    # window, a QDockWidget can, and can do so independently of the
+    # other one
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    assert isinstance(win.structure_dock, QtWidgets.QDockWidget)
+    assert isinstance(win.parameters_dock, QtWidgets.QDockWidget)
+    assert win.structure_dock.widget() is win.tree_view
+    assert (
+        win.parameters_dock.widget().findChild(QtWidgets.QTreeView)
+        is win.table_view
+    )
+
+    assert (
+        win.dockWidgetArea(win.structure_dock)
+        == QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+    )
+    assert (
+        win.dockWidgetArea(win.parameters_dock)
+        == QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+    )
+
+    floatable = QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetFloatable
+    for dock in (win.structure_dock, win.parameters_dock):
+        assert dock.features() & floatable
+
+    # undocking actually works, not just the feature flag being set
+    assert not win.structure_dock.isFloating()
+    win.structure_dock.setFloating(True)
+    assert win.structure_dock.isFloating()
+    # the parameters pane is untouched by floating the structure one
+    assert not win.parameters_dock.isFloating()
+
+
+def test_left_panes_start_wider_than_the_plots(qtbot):
+    # Qt's default dock sizing is based on each pane's size hint, which
+    # leaves them cramped even once their columns are auto-sized to fit
+    # -- the docks need to start off wider, not just the columns
+    # within them
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
     qtbot.add_widget(win)
@@ -144,17 +182,113 @@ def test_left_pane_starts_wider_than_the_plots(qtbot):
     win.show()
     qtbot.waitExposed(win)
 
-    # the outer (tree/table vs. plots) splitter is horizontal; the
-    # inner (tree vs. table) one is vertical -- orientation picks out
-    # the one that actually matters here unambiguously
-    main_splitter = next(
-        s
-        for s in win.findChildren(QtWidgets.QSplitter)
-        if s.orientation() == QtCore.Qt.Orientation.Horizontal
+    assert win.structure_dock.width() > 400
+    assert win.parameters_dock.width() > 400
+
+
+def test_plot_canvases_use_an_expanding_size_policy(qtbot):
+    # FigureCanvasQTAgg defaults to Preferred, not Expanding -- that's
+    # not a strong enough claim on space for the canvas to reliably
+    # fill a QTabWidget page, especially once undocking a QDockWidget
+    # frees up room elsewhere in the QMainWindow that the canvas is
+    # supposed to grow into
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    expanding = QtWidgets.QSizePolicy.Policy.Expanding
+    for canvas in (
+        win.plot_controller.reflectivity_canvas,
+        win.plot_controller.sld_canvas,
+    ):
+        sp = canvas.sizePolicy()
+        assert sp.horizontalPolicy() == expanding
+        assert sp.verticalPolicy() == expanding
+
+
+def test_plots_expand_into_the_space_a_floated_dock_frees_up(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+    win.resize(1200, 800)
+    win.show()
+    qtbot.waitExposed(win)
+
+    central = win.centralWidget()
+    width_before = central.width()
+
+    win.structure_dock.setFloating(True)
+    win.parameters_dock.setFloating(True)
+    qtbot.wait(50)
+
+    assert central.width() > width_before
+    # the central widget is the whole window's width now that neither
+    # dock is claiming any of it
+    assert central.width() == win.width()
+
+
+def test_plots_keep_tracking_window_resizes_after_undocking(qtbot):
+    # regression test for feedback that the graph area stopped
+    # dynamically expanding/contracting with the window once both
+    # left-hand panes were undocked -- not just a one-off snapshot
+    # right after undocking, but continuing to track further resizes
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+    win.resize(1200, 800)
+    win.show()
+    qtbot.waitExposed(win)
+
+    win.structure_dock.setFloating(True)
+    win.parameters_dock.setFloating(True)
+    qtbot.wait(50)
+
+    central = win.centralWidget()
+
+    win.resize(1600, 900)
+    qtbot.wait(50)
+    assert central.width() == win.width()
+    assert central.width() > 1500
+
+    win.resize(900, 600)
+    qtbot.wait(50)
+    assert central.width() == win.width()
+    assert central.width() < 950
+
+
+def test_undocking_triggers_a_central_widget_relayout(qtbot, monkeypatch):
+    # topLevelChanged is what's supposed to prompt QMainWindowLayout to
+    # reconsider how much space the central widget owns -- this checks
+    # the wiring fires, independent of what the actual resulting size
+    # ends up being (covered by the tests above)
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    calls = []
+    monkeypatch.setattr(
+        win, "_do_relayout_central_widget", lambda: calls.append(1)
     )
-    left_width, right_width = main_splitter.sizes()
-    assert left_width > 400
-    assert left_width > right_width * 0.5
+
+    win.structure_dock.setFloating(True)
+    qtbot.wait(10)
+    assert calls == [1]
+
+    win.parameters_dock.setFloating(True)
+    qtbot.wait(10)
+    assert calls == [1, 1]
+
+
+def test_fit_button_lives_in_the_parameters_dock(qtbot):
+    # fitting is a parameter-tree action -- the button belongs with the
+    # parameters it changes, not with the plots, so it travels with the
+    # Parameters dock if that gets undocked
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    assert win.parameters_dock.widget().isAncestorOf(win.fit_button)
+    assert not win.centralWidget().isAncestorOf(win.fit_button)
 
 
 def test_reflectivity_and_sld_tabs_have_a_matplotlib_toolbar(qtbot):
