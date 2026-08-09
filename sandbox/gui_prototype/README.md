@@ -116,10 +116,19 @@ list.
   `DataStoreTreeModel` also owns structural editing of a Structure:
   `insert_component()`, `remove_component()`, `move_component()`, plus
   drag-and-drop (`mimeData()`/`dropMimeData()`) for reordering top-level
-  Components by dragging them in the tree. All three funnel through one
-  `_check_boundary()` check (a Structure's first and last Component must
-  be a `Slab`; a nested `Stack` has no such rule) rather than
-  reimplementing that rule three times. The drag-and-drop implementation
+  Components by dragging them in the tree. `insert_component()` funnels
+  through `_check_boundary()` (a Structure's first and last Component
+  must be a `Slab`; a nested `Stack` has no such rule). `remove_component()`
+  and `move_component()` are stricter than that: the top-level
+  fronting/backing Slabs are *pinned*, not just type-checked — neither
+  one can ever be removed, dragged elsewhere, or displaced by another
+  Component being dragged into position 0 or -1, even if the result
+  would still technically satisfy "first/last is a Slab" (e.g. dragging
+  a different Slab into the first slot is refused too, not just a
+  non-Slab). Add Component can still insert a new Slab at position
+  0/the end if explicitly asked to — that's the one path left that can
+  establish a *new* boundary Component — but nothing removes or
+  reorders its way into replacing one. The drag-and-drop implementation
   deliberately doesn't serialise row-index *paths* into the dragged MIME
   data the way `treeview_gui_model.dropMimeData` does today — that's
   brittle if the tree's shape changes between drag-start and drop.
@@ -324,12 +333,17 @@ actually work, not just compile:
 - removing a Component works, is refused when a dataset row (not a
   Component) is selected, and unlinks a dependent parameter in a
   *different* dataset;
+- the top-level fronting and backing Slab can each never be removed,
+  no matter what would end up taking their place;
 - a drag-and-drop reorder (driven directly through
   `mimeData()`/`dropMimeData()`, since simulating real mouse-drag events
-  isn't practical headless) produces the expected new order and
-  triggers the same tree/plot refresh;
+  isn't practical headless) between two *interior* positions produces
+  the expected new order and triggers the same tree/plot refresh;
 - a reorder that would put a non-`Slab` first or last is rejected
   (`dropMimeData` returns `False`, order unchanged);
+- the fronting Slab itself can't be dragged elsewhere, and no other
+  Component can be dragged into the first or last position, even
+  another `Slab` — the boundary Slabs are pinned, not just type-checked;
 - a Component nested inside a `Stack` can't be dragged at all
   (`mimeData()` returns `None` for it).
 

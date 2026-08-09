@@ -121,6 +121,97 @@ def test_remove_component_unlinks_cross_dataset_dependents(qtbot):
     assert dependent.constraint is None
 
 
+def test_first_component_cannot_be_removed(qtbot):
+    # the fronting Slab can never be removed, no matter what would end
+    # up taking its place -- unlike the old "just needs to still be a
+    # Slab" rule, this is unconditional
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    n_before = len(do.model.structure)
+    idx = win.tree_model.index(0, 0, win.tree_model.index(0, 0))
+    win.tree_view.setCurrentIndex(idx)
+    win.on_remove_component_triggered()
+
+    assert len(do.model.structure) == n_before  # refused, untouched
+
+
+def test_last_component_cannot_be_removed(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    n_before = len(do.model.structure)
+    do_index = win.tree_model.index(0, 0)
+    last_row = win.tree_model.rowCount(do_index) - 1
+    idx = win.tree_model.index(last_row, 0, do_index)
+    win.tree_view.setCurrentIndex(idx)
+    win.on_remove_component_triggered()
+
+    assert len(do.model.structure) == n_before  # refused, untouched
+
+
+def test_first_slab_cannot_be_dragged_away(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    original = list(do.model.structure)
+
+    do_index = win.tree_model.index(0, 0)
+    source_index = win.tree_model.index(0, 0, do_index)  # the front Slab
+    mime = win.tree_model.mimeData([source_index])
+    ok = win.tree_model.dropMimeData(
+        mime, Qt.DropAction.MoveAction, 2, 0, do_index
+    )
+
+    assert not ok
+    assert list(do.model.structure) == original
+
+
+def test_component_cannot_be_dragged_into_first_position(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    original = list(do.model.structure)
+
+    do_index = win.tree_model.index(0, 0)
+    source_index = win.tree_model.index(2, 0, do_index)  # polymer
+    mime = win.tree_model.mimeData([source_index])
+    ok = win.tree_model.dropMimeData(
+        mime, Qt.DropAction.MoveAction, 0, 0, do_index
+    )
+
+    assert not ok
+    assert list(do.model.structure) == original
+
+
+def test_component_cannot_be_dragged_into_last_position(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    original = list(do.model.structure)
+
+    do_index = win.tree_model.index(0, 0)
+    source_index = win.tree_model.index(1, 0, do_index)  # sio2
+    append_row = win.tree_model.rowCount(do_index)  # "after everything"
+    mime = win.tree_model.mimeData([source_index])
+    ok = win.tree_model.dropMimeData(
+        mime, Qt.DropAction.MoveAction, append_row, 0, do_index
+    )
+
+    assert not ok
+    assert list(do.model.structure) == original
+
+
 def test_drag_drop_reorder_refreshes_table_and_plot(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
@@ -133,15 +224,18 @@ def test_drag_drop_reorder_refreshes_table_and_plot(qtbot):
     do_index = win.tree_model.index(0, 0)
     source_index = win.tree_model.index(2, 0, do_index)  # polymer
 
+    # a legal *interior* move: polymer (position 2) in front of sio2
+    # (position 1) -- neither end is the first/last position, so this
+    # one's allowed (see test_boundary_* below for the ones that aren't)
     mime = win.tree_model.mimeData([source_index])
     ok = win.tree_model.dropMimeData(
-        mime, Qt.DropAction.MoveAction, 0, 0, do_index
+        mime, Qt.DropAction.MoveAction, 1, 0, do_index
     )
 
     assert ok
     assert list(do.model.structure) == [
-        original[2],
         original[0],
+        original[2],
         original[1],
         original[3],
     ]

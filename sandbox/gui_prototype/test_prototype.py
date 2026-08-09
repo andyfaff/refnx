@@ -74,16 +74,17 @@ def test_boundary_slab_parameters_hidden(qtbot):
     assert middle.rough in shown
 
 
-def test_boundary_hiding_follows_reorder(qtbot):
-    # dragging a different Slab into the first position should hide
-    # *its* thick/isld/rough and reveal the old first Slab's, since
-    # "first" is a position, not a fixed identity
+def test_boundary_hiding_survives_a_rejected_reorder(qtbot):
+    # the first/last Slab can never be displaced (see
+    # test_structure_editing.py's boundary-pinning tests), so dragging a
+    # different Slab into the first position is rejected outright, and
+    # the original boundary hiding is left exactly as it was.
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
     qtbot.add_widget(win)
 
     structure = datastore["e361r"].model.structure
-    old_first = structure[0]
+    original_first = structure[0]
     polymer = structure[2]
 
     do_index = win.tree_model.index(0, 0)
@@ -92,12 +93,13 @@ def test_boundary_hiding_follows_reorder(qtbot):
     ok = win.tree_model.dropMimeData(
         mime, QtCore.Qt.DropAction.MoveAction, 0, 0, do_index
     )
-    assert ok
-    assert structure[0] is polymer
+    assert not ok
+    assert structure[0] is original_first
 
     shown = win.parameter_model._row_of
-    assert polymer.thick not in shown
-    assert old_first.thick in shown  # no longer first, no longer hidden
+    assert original_first.sld.real in shown
+    assert original_first.thick not in shown
+    assert polymer.thick in shown  # still an ordinary, visible middle Slab
 
 
 def test_nested_stack_slab_not_treated_as_boundary(qtbot):

@@ -255,12 +255,18 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
 
     # -- structural editing: add / remove / reorder Components --
     #
-    # All three go through the same shape: build the list the mutation
-    # *would* produce, validate it, and only then touch the real
-    # refnx Structure/Stack. That keeps the "first and last must be a
-    # Slab" rule (which only applies to a top-level Structure -- Stacks
-    # have no such requirement) enforced in one place instead of
-    # separately in insert/remove/move.
+    # Insert goes through "build the prospective list, validate it,
+    # only then touch the real refnx Structure/Stack" -- the "first and
+    # last must be a Slab" rule (which only applies to a top-level
+    # Structure -- Stacks have no such requirement). Remove and move
+    # are stricter than that: the top-level fronting/backing Slabs
+    # aren't just required to stay Slabs, they're pinned -- neither one
+    # can ever be removed, dragged elsewhere, or displaced by something
+    # else being dragged into position 0 or -1, regardless of whether
+    # the result would still technically satisfy the Slab-typed rule.
+    # Add Component can still insert a new Slab at position 0/end (that
+    # only comes up when explicitly asked for one), but nothing removes
+    # or reorders its way into replacing the boundary Components.
 
     def _check_boundary(self, is_top_level, resulting_components):
         if not is_top_level:
@@ -292,9 +298,9 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
         """Remove the Component at `index` (top-level, or nested in a
         Stack). Returns the removed Component so the caller can unlink
         any parameters elsewhere that depended on it. Raises
-        StructureEditError, and leaves the structure untouched, if
-        removing a top-level Component would put a non-Slab first or
-        last (or leave it empty)."""
+        StructureEditError, and leaves the structure untouched, if this
+        is the top-level fronting or backing Slab -- those can never be
+        removed, no matter what would end up taking their place."""
         node = index.internalPointer()
         component = node.obj
         if isinstance(component, DataObject):
@@ -303,9 +309,15 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
         parent_list, is_top_level = self._owning_list(node)
         position = parent_list.index(component)
 
-        prospective = list(parent_list)
-        del prospective[position]
-        self._check_boundary(is_top_level, prospective)
+        if is_top_level:
+            if position == 0:
+                raise StructureEditError(
+                    "The first Component in a Structure can't be removed."
+                )
+            if position == len(parent_list) - 1:
+                raise StructureEditError(
+                    "The last Component in a Structure can't be removed."
+                )
 
         del parent_list[position]
         self.set_datastore(self._datastore)
@@ -315,7 +327,10 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
         """Move the top-level Component at `index` to `new_position`
         within the same Structure. Nested (Stack) Components can't be
         dragged -- see flags(). Raises StructureEditError, and leaves
-        the structure untouched, on a boundary violation."""
+        the structure untouched, if the Component being dragged is the
+        fronting/backing Slab, or if the destination is position 0 or
+        -1 -- neither the boundary Slabs themselves, nor what occupies
+        their position, can ever change via a drag."""
         node = index.internalPointer()
         component = node.obj
         parent_list, is_top_level = self._owning_list(node)
@@ -325,15 +340,27 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
             )
 
         old_position = parent_list.index(component)
-        prospective = list(parent_list)
-        prospective.pop(old_position)
-        if new_position > old_position:
-            new_position -= 1
-        prospective.insert(new_position, component)
-        self._check_boundary(True, prospective)
+        last_position = len(parent_list) - 1
+        if old_position == 0 or old_position == last_position:
+            raise StructureEditError(
+                "The first and last Component in a Structure can't be "
+                "moved."
+            )
+
+        # new_position is expressed in "before removing the dragged
+        # Component" coordinates (Qt's drop-row convention); once it's
+        # popped out, everything after its old slot shifts down by one.
+        destination = new_position
+        if destination > old_position:
+            destination -= 1
+        if destination == 0 or destination == last_position:
+            raise StructureEditError(
+                "A Component can't be moved into the first or last "
+                "position."
+            )
 
         del parent_list[old_position]
-        parent_list.insert(new_position, component)
+        parent_list.insert(destination, component)
         self.set_datastore(self._datastore)
 
     def _owning_list(self, node):
