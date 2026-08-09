@@ -39,7 +39,7 @@ from models import (
 )
 from controllers import FitController
 from plotting import PlotController
-from dialogs import AddComponentDialog, CopyModelDialog, default_component
+from dialogs import AddComponentDialog, default_component
 import persistence
 
 
@@ -119,6 +119,14 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.tree_view.setDefaultDropAction(QtCore.Qt.DropAction.MoveAction)
         self.tree_view.setDropIndicatorShown(True)
+        # right-click a dataset for "Copy a model to here", matching the
+        # production app's OpenMenu/copy_from_action
+        self.tree_view.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.tree_view.customContextMenuRequested.connect(
+            self.on_tree_context_menu
+        )
 
         self.table_view = QtWidgets.QTableView()
         self.table_view.setModel(self.parameter_model)
@@ -180,9 +188,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         load_model_action = file_menu.addAction("Load Model...")
         load_model_action.triggered.connect(self.on_load_model_triggered)
-
-        copy_model_action = file_menu.addAction("Copy Model...")
-        copy_model_action.triggered.connect(self.on_copy_model_triggered)
 
         file_menu.addSeparator()
 
@@ -283,37 +288,88 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._replace_model(data_object, model, str(path))
 
-    def on_copy_model_triggered(self):
-        if len(self.datastore) < 2:
-            self.msg("Need at least two datasets loaded to copy a model.")
+    def on_tree_context_menu(self, position):
+        index = self.tree_view.indexAt(position)
+        if not index.isValid() or not len(self.datastore):
             return
 
-        default = self._selected_data_object()
-        default_name = default.name if default is not None else None
+        # Qt already selects the item under the cursor before emitting
+        # customContextMenuRequested (standard platform right-click
+        # behaviour), so self.tree_view.selectedIndexes() below reflects
+        # whatever was clicked -- including a multi-selection made
+        # beforehand, if the click landed inside it.
+        menu, copy_action = self._build_tree_context_menu()
+        action = menu.exec(self.tree_view.viewport().mapToGlobal(position))
 
-        dialog = CopyModelDialog(
-            self.datastore, default_source=default_name, parent=self
+        if action is copy_action:
+            self.on_copy_model_to_here()
+
+    def _build_tree_context_menu(self):
+        # split out from on_tree_context_menu so tests can check the
+        # menu's contents without calling the real (blocking, can't be
+        # driven headlessly) QMenu.exec().
+        menu = QtWidgets.QMenu(self.tree_view)
+        copy_action = menu.addAction("Copy a model to here")
+        return menu, copy_action
+
+    def on_copy_model_to_here(self):
+        """Mirrors the production app's copy_from_action: ask which
+        dataset's model to copy, then overwrite the model of every
+        dataset currently selected in the tree with a copy of it."""
+        which, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Which model did you want to copy?",
+            "model",
+            self.datastore.names,
+            editable=False,
         )
-        if not dialog.exec():
+        if not ok:
+            return
+        source_model = self.datastore[which].model
+
+        targets = []
+        seen = set()
+        for index in self.tree_view.selectedIndexes():
+            data_object = self.tree_model.data_object_for_index(index)
+            if data_object is not None and data_object.name not in seen:
+                seen.add(data_object.name)
+                targets.append(data_object)
+
+        if not targets:
+            self.msg("Select a dataset (or datasets) to copy the model to.")
             return
 
-        source_name = dialog.source_name()
-        target_name = dialog.target_name()
-        if source_name == target_name:
-            self.msg("Source and target datasets must be different.")
-            return
+        # batched like the production app's _hold_updating: unlink and
+        # swap every target's model first, refresh/report once at the
+        # end, rather than doing a full refresh per target.
+        unlinked = []
+        for target in targets:
+            old_parameters = list(target.model.parameters.flattened())
+            unlinked.extend(unlink_dependents(self.datastore, old_parameters))
 
-        source = self.datastore[source_name]
-        target = self.datastore[target_name]
-        self._replace_model(target, deepcopy(source.model), source_name)
+            new_model = deepcopy(source_model)
+            new_model.name = target.name
+            target.model = new_model
+
+        self._refresh()
+
+        names = ", ".join(t.name for t in targets)
+        if unlinked:
+            self.msg(
+                f"Copied {which}'s model to {names}; unlinked "
+                f"{len(unlinked)} dependent parameter(s) elsewhere."
+            )
+        else:
+            self.msg(f"Copied {which}'s model to {names}")
 
     def _replace_model(self, data_object, new_model, source_description):
         """Swap `data_object`'s model out entirely, unlinking any
         parameter elsewhere -- including in a different, currently
         unchecked dataset -- that was constrained to depend on one of
-        the parameters going away. Shared by Load Model and Copy Model,
-        since both are really the same operation with a different
-        source for the replacement model."""
+        the parameters going away. Used by Load Model; Copy Model
+        (on_copy_model_to_here) does the same unlink-then-swap for
+        potentially several targets at once, so it batches that logic
+        itself rather than calling this once per target."""
         old_parameters = list(data_object.model.parameters.flattened())
         unlinked = unlink_dependents(self.datastore, old_parameters)
 

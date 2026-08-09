@@ -7,6 +7,7 @@ from importlib import resources
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from qtpy import QtWidgets, QtCore
 from qtpy.QtCore import Qt
 
 import refnx.reflect.tests
@@ -14,7 +15,8 @@ from refnx.reflect import SLD, ReflectModel
 from refnx.analysis import Objective
 
 import persistence
-from main import build_demo_datastore, MainWindow
+from datastore import DataObject
+from main import build_demo_datastore, MainWindow, _default_model
 
 
 def _chisqr(data_object):
@@ -247,22 +249,26 @@ def test_load_model_unlinks_cross_dataset_dependents(
     assert dependent.constraint is None
 
 
-class _FakeCopyModelDialog:
-    def __init__(self, source, target):
-        self._source = source
-        self._target = target
+def test_tree_context_menu_has_copy_action(qtbot):
+    # Verifies the menu on_tree_context_menu would show, without calling
+    # the real QMenu.exec() -- that's a genuinely blocking, modal C++
+    # call that can't be driven or intercepted headlessly (confirmed by
+    # trying: a monkeypatched QMenu.exec never got called, and the real
+    # one hung waiting for a click that can't come). Same category of
+    # limitation as not being able to simulate real mouse drags for the
+    # drag-and-drop tests elsewhere in this suite -- the *logic* behind
+    # the menu (on_copy_model_to_here) is what's actually worth testing,
+    # and is covered directly below.
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
 
-    def exec(self):
-        return 1  # QDialog.DialogCode.Accepted
-
-    def source_name(self):
-        return self._source
-
-    def target_name(self):
-        return self._target
+    menu, copy_action = win._build_tree_context_menu()
+    assert copy_action.text() == "Copy a model to here"
+    assert copy_action in menu.actions()
 
 
-def test_copy_model_via_dialog(qtbot, monkeypatch):
+def test_copy_model_to_selected_dataset(qtbot, monkeypatch):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
     qtbot.add_widget(win)
@@ -271,28 +277,68 @@ def test_copy_model_via_dialog(qtbot, monkeypatch):
     do2 = datastore["e365r"]
     do1.model.bkg.value = 1.23e-6
 
+    # select e365r -- that's the target "here" the model gets copied to
+    e365_index = win.tree_model.index(1, 0)
+    win.tree_view.setCurrentIndex(e365_index)
+
     monkeypatch.setattr(
-        "main.CopyModelDialog",
-        lambda *a, **k: _FakeCopyModelDialog("e361r", "e365r"),
+        QtWidgets.QInputDialog, "getItem", lambda *a, **k: ("e361r", True)
     )
-    win.on_copy_model_triggered()
+    win.on_copy_model_to_here()
 
     # e365r's model now matches e361r's values...
     assert do2.model.bkg.value == 1.23e-6
-    # ...but it's an independent copy, not the same object
+    # ...but it's an independent copy, not the same object, renamed to
+    # match its new dataset
     assert do2.model is not do1.model
+    assert do2.model.name == "e365r"
     do1.model.bkg.value = 9.9e-6
     assert do2.model.bkg.value == 1.23e-6
 
 
-def test_copy_model_requires_two_datasets(qtbot):
+def test_copy_model_to_multiple_selected_datasets(qtbot, monkeypatch):
     datastore = build_demo_datastore()
-    datastore.remove("e365r")
+    do3_dataset = datastore["e361r"].dataset
+    datastore.add(DataObject("e999r", do3_dataset, _default_model()))
     win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    win.on_copy_model_triggered()  # should just message, not crash
-    assert len(datastore) == 1
+    source = datastore["e361r"]
+    source.model.bkg.value = 4.56e-6
+
+    # select both other datasets as targets
+    selection_model = win.tree_view.selectionModel()
+    for row in (1, 2):  # e365r, e999r
+        selection_model.select(
+            win.tree_model.index(row, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+
+    monkeypatch.setattr(
+        QtWidgets.QInputDialog, "getItem", lambda *a, **k: ("e361r", True)
+    )
+    win.on_copy_model_to_here()
+
+    assert datastore["e365r"].model.bkg.value == 4.56e-6
+    assert datastore["e999r"].model.bkg.value == 4.56e-6
+    assert datastore["e365r"].model is not datastore["e999r"].model
+
+
+def test_copy_model_no_target_selected_does_nothing(qtbot, monkeypatch):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do2 = datastore["e365r"]
+    original_model = do2.model
+
+    win.tree_view.selectionModel().clearSelection()
+    monkeypatch.setattr(
+        QtWidgets.QInputDialog, "getItem", lambda *a, **k: ("e361r", True)
+    )
+    win.on_copy_model_to_here()  # should just message, not crash
+
+    assert do2.model is original_model
 
 
 def test_copy_model_unlinks_cross_dataset_dependents(qtbot, monkeypatch):
@@ -307,11 +353,13 @@ def test_copy_model_unlinks_cross_dataset_dependents(qtbot, monkeypatch):
     dependent = do1.model.structure[-2].sld.real
     dependent.constraint = old_target_thick
 
+    e365_index = win.tree_model.index(1, 0)
+    win.tree_view.setCurrentIndex(e365_index)
+
     monkeypatch.setattr(
-        "main.CopyModelDialog",
-        lambda *a, **k: _FakeCopyModelDialog("e361r", "e365r"),
+        QtWidgets.QInputDialog, "getItem", lambda *a, **k: ("e361r", True)
     )
-    win.on_copy_model_triggered()
+    win.on_copy_model_to_here()
 
     assert dependent.constraint is None
 

@@ -76,8 +76,8 @@ currently-unchecked dataset just means checking it first.
   `main.py`) whenever a dataset's whole model is replaced — Load Model
   had the same gap for a while: it swapped `data_object.model` for a
   new one without unlinking whatever used to depend on the old one's
-  parameters, found and fixed while wiring up Copy Model, which is the
-  same operation with a different source.
+  parameters, found and fixed while wiring up Copy Model (below), which
+  is the same operation with a different source.
 - **`controllers.py`** — `FitController`, a reusable `QObject` wrapping
   `CurveFitter` on a background `QThread`. Properly async
   (`started`/`progress`/`finished` signals) — no nested `QEventLoop`,
@@ -111,10 +111,6 @@ currently-unchecked dataset just means checking it first.
   that table is generic (it just flattens whatever `.parameters` a
   Component happens to expose), no bespoke editing UI is needed once the
   object exists, only a bespoke *constructor* for the ones that need it.
-  Also `CopyModelDialog` — explicit From/To dataset combo boxes, rather
-  than "copy the selected dataset's model somewhere", so the direction
-  is never ambiguous regardless of what's currently selected in the
-  tree.
 - **`main.py`** — wires it all into a `QMainWindow`: dataset tree
   (top-left, checkboxes control fit inclusion, drag Components to
   reorder them) drives highlighting in the parameter table (bottom-left,
@@ -127,9 +123,8 @@ currently-unchecked dataset just means checking it first.
   immediately. **File** menu: *Load Data...* (adds one or more new
   datasets — doesn't replace what's already loaded — each starting from
   a copy of the currently-selected dataset's model, or a bare default if
-  none is selected), *Load Model...* / *Copy Model...* / *Save Model...*
-  (apply to whichever dataset is currently selected in the tree, except
-  Copy Model which has its own explicit source/target), *Remove Selected
+  none is selected), *Load Model...* / *Save Model...* (apply to
+  whichever dataset is currently selected in the tree), *Remove Selected
   Dataset*. **Structure** menu: *Add Component...* (choose dataset, type,
   and position — a `QSpinBox`, not just "append"), *Remove Selected
   Component* (also unlinks any parameter, anywhere, that depended on
@@ -137,10 +132,28 @@ currently-unchecked dataset just means checking it first.
   `on_structure_changed`, connected to `DataStoreTreeModel.modelReset`,
   is what refreshes the parameter table and plots after *any* structural
   edit — add, remove, or a drag-and-drop reorder — without each of those
-  three call sites needing to remember to do it themselves. Load Model
-  and Copy Model both go through one `_replace_model()` helper, since
-  swapping a dataset's model out wholesale is the same operation either
-  way regardless of where the replacement comes from — see below.
+  three call sites needing to remember to do it themselves.
+
+  Right-clicking the tree shows a context menu with **Copy a model to
+  here** — deliberately matching the production app's
+  `OpenMenu`/`copy_from_action` rather than the File-menu dialog this
+  started as: pick which dataset's model to copy via a plain
+  `QInputDialog.getItem` (a "which model?" combo, same as the production
+  app), and it overwrites the model of *every* dataset currently
+  selected in the tree (right-click extends whatever multi-selection was
+  already made, same as native platform context menus), batched into one
+  refresh at the end rather than one per target. Goes through the same
+  `unlink_dependents` logic as Component removal — and as Load Model,
+  which had the identical gap for a while: it swapped
+  `data_object.model` for a new one without unlinking whatever used to
+  depend on the old one's parameters, caught and fixed while building
+  this. `on_copy_model_to_here()` and `_build_tree_context_menu()` are
+  split out from `on_tree_context_menu()` specifically so tests can
+  drive the actual copy logic and check the menu's contents without
+  calling the real `QMenu.exec()` — that's a blocking, modal call to
+  actual Qt/C++ event-loop machinery, not something monkeypatching from
+  Python reaches, and the only way found for it to fail on this was
+  silently hanging forever in a headless test run instead of raising.
 
 ## What's deliberately not here
 
@@ -201,10 +214,14 @@ actually work, not just compile:
 - Load Model unlinks any parameter, in any dataset, that depended on
   the model it's replacing (the pre-existing gap fixed alongside Copy
   Model);
+- the tree's right-click menu offers "Copy a model to here" (checked by
+  inspecting the built `QMenu`'s contents directly, not by driving a
+  real click through the blocking `QMenu.exec()`);
 - Copy Model copies by value, not reference (mutating the source
-  afterward doesn't touch the copy), refuses same-dataset source/target,
-  handles there being only one dataset loaded without crashing, and also
-  unlinks dependents of whatever model it's replacing;
+  afterward doesn't touch the copy), applies to *every* dataset selected
+  in the tree at once (not just one), does nothing (rather than
+  crashing) if nothing's selected, and also unlinks dependents of
+  whatever model it's replacing;
 - removing a dataset actually removes it from the tree and table.
 
 `test_structure_editing.py` covers Add/Remove/reorder Component:
