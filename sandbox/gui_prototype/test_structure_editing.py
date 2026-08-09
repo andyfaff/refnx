@@ -361,7 +361,7 @@ def test_add_component_dialog_lists_stacks_as_containers(qtbot):
     datastore = build_demo_datastore()
     do = datastore["e361r"]
     stack = Stack([SLD(4.0)(5, 1)], name="stack")
-    do.model.structure.insert(1, stack)
+    do.model.structure.insert(1, stack)  # top-level position 1
 
     dialog = AddComponentDialog(datastore, default_dataset="e361r")
     qtbot.add_widget(dialog)
@@ -370,9 +370,38 @@ def test_add_component_dialog_lists_stacks_as_containers(qtbot):
         dialog.container_combo.itemText(i)
         for i in range(dialog.container_combo.count())
     ]
-    assert labels == ["Top level", "stack (inside Stack)"]
+    assert labels == ["Top level", "stack (Stack at position 1)"]
     assert dialog.container_combo.itemData(0) is None
     assert dialog.container_combo.itemData(1) is stack
+
+
+def test_add_component_dialog_disambiguates_multiple_stacks(qtbot):
+    # two Stacks with the *same* name (or no name at all) need to stay
+    # distinguishable in the container list -- their structural
+    # position is what does that, not the (possibly duplicate) name
+    from dialogs import AddComponentDialog
+
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    outer = Stack([SLD(4.0)(5, 1)], name="stack")
+    inner = Stack([SLD(2.0)(3, 1)], name="stack")  # same name, nested
+    outer.append(inner)
+    do.model.structure.insert(1, outer)  # top-level position 1
+
+    dialog = AddComponentDialog(datastore, default_dataset="e361r")
+    qtbot.add_widget(dialog)
+
+    labels = [
+        dialog.container_combo.itemText(i)
+        for i in range(dialog.container_combo.count())
+    ]
+    assert labels == [
+        "Top level",
+        "stack (Stack at position 1)",
+        "stack (Stack at position 1 → 1)",
+    ]
+    assert dialog.container_combo.itemData(1) is outer
+    assert dialog.container_combo.itemData(2) is inner
 
 
 def test_add_component_dialog_position_range_excludes_top_level_boundary(

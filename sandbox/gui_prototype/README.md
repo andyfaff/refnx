@@ -186,7 +186,13 @@ list.
 - **`dialogs.py`** — `AddComponentDialog` (pick a dataset, a *container*
   — the top level of its Structure, or any `Stack` found anywhere within
   it, listed by `_containers()`/`_iter_stacks()` — a Component type, and
-  a position within that container) and `default_component(kind)`. The
+  a position within that container) and `default_component(kind)`. Each
+  `Stack` in the container dropdown is labelled with its *structural
+  position* (e.g. "stack (Stack at position 1)", or "position 1 → 0"
+  for one nested inside another) rather than just its `.name` — a
+  `Stack`'s name is just a label a user typed in (or left blank), not a
+  unique identifier, so two Stacks sharing a name (or both unnamed)
+  would otherwise be indistinguishable in the list. The
   position spinbox's range depends on the chosen container: `[1, N-1]`
   for the top level (position 0 or N would create a new first/last
   Component — pinned, so not offered at all), `[0, N]` for a `Stack`
@@ -397,6 +403,9 @@ actually work, not just compile:
   level" plus every `Stack` found in the chosen dataset's Structure
   (including nested ones), and the position spinbox's range is `[1,
   N-1]` for the top level vs `[0, N]` for a `Stack`;
+- two Stacks sharing a name stay distinguishable in that dropdown --
+  each is labelled with its own structural position (e.g. "position 1"
+  vs "position 1 → 1" for one nested inside the other);
 - removing a Component works, is refused when a dataset row (not a
   Component) is selected, and unlinks a dependent parameter in a
   *different* dataset;

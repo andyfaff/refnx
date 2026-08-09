@@ -46,27 +46,39 @@ def default_component(kind):
     raise ValueError(f"Unknown component kind: {kind!r}")
 
 
-def _iter_stacks(component):
-    """Yields every Stack found within `component` -- itself, if it is
-    one, then recursing into its children (a Stack can nest another
-    Stack). Ordinary Components can't hold anything, so they're never
+def _iter_stacks(component, path=()):
+    """Yields (stack, path) for every Stack found within `component` --
+    itself, if it is one, then recursing into its children (a Stack can
+    nest another Stack). `path` is the sequence of indices needed to
+    reach it from the top of the Structure -- e.g. (2,) for a top-level
+    Stack at position 2, or (1, 0) for one nested at position 0 inside
+    a Stack at top-level position 1 -- since a Stack's own `.name` is
+    just a label a user typed in (or left blank), not a unique
+    identifier: two Stacks can easily share a name, or have none at
+    all, so the container list needs something else to tell them apart
+    by. Ordinary Components can't hold anything, so they're never
     yielded here."""
     if isinstance(component, Stack):
-        yield component
-        for child in component:
-            yield from _iter_stacks(child)
+        yield component, path
+        for i, child in enumerate(component):
+            yield from _iter_stacks(child, path + (i,))
 
 
 def _containers(data_object):
     """(label, container) pairs for every place a new Component could
     go in `data_object`'s Structure: the top level itself (`None`),
-    plus every Stack found anywhere within it -- a Stack is the only
-    kind of Component that can hold other Components."""
+    plus every Stack found anywhere within it, each labelled with its
+    structural position so multiple Stacks stay distinguishable even
+    if they share a name -- a Stack is the only kind of Component that
+    can hold other Components."""
     containers = [("Top level", None)]
-    for top_level in data_object.model.structure:
-        for stack in _iter_stacks(top_level):
+    for i, top_level in enumerate(data_object.model.structure):
+        for stack, path in _iter_stacks(top_level, (i,)):
             label = getattr(stack, "name", None) or "Stack"
-            containers.append((f"{label} (inside Stack)", stack))
+            position = " → ".join(str(p) for p in path)
+            containers.append(
+                (f"{label} (Stack at position {position})", stack)
+            )
     return containers
 
 
