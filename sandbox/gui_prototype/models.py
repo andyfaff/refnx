@@ -146,8 +146,9 @@ def _own_parameters(component):
 
 
 class StructureEditError(Exception):
-    """Raised when an add/remove/move would leave a top-level Structure
-    without a Slab as its first and/or last Component."""
+    """Raised when an insert/remove/move would touch the first or last
+    Component of a top-level Structure -- those positions are pinned,
+    see DataStoreTreeModel's structural-editing methods below."""
 
 
 class _TreeNode:
@@ -266,43 +267,35 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
 
     # -- structural editing: add / remove / reorder Components --
     #
-    # Insert goes through "build the prospective list, validate it,
-    # only then touch the real refnx Structure/Stack" -- the "first and
-    # last must be a Slab" rule (which only applies to a top-level
-    # Structure -- Stacks have no such requirement). Remove and move
-    # are stricter than that: the top-level fronting/backing Slabs
-    # aren't just required to stay Slabs, they're pinned -- neither one
-    # can ever be removed, dragged elsewhere, or displaced by something
-    # else being dragged into position 0 or -1, regardless of whether
-    # the result would still technically satisfy the Slab-typed rule.
-    # Add Component can still insert a new Slab at position 0/end (that
-    # only comes up when explicitly asked for one), but nothing removes
-    # or reorders its way into replacing the boundary Components.
+    # The top-level fronting/backing Slabs are pinned: neither one can
+    # ever be removed, dragged elsewhere, displaced by something else
+    # being dragged into position 0 or -1, or displaced by a *new*
+    # Component being inserted there either -- insert, remove, and move
+    # all refuse to touch position 0 or -1 of a top-level Structure,
+    # unconditionally, regardless of whether the result would still
+    # technically have a Slab there. A Stack has no such rule; its
+    # contents can be freely inserted/removed/reordered anywhere.
 
-    def _check_boundary(self, is_top_level, resulting_components):
-        if not is_top_level:
-            return
-        if not resulting_components:
-            raise StructureEditError("A structure can't be left empty.")
-        if not isinstance(resulting_components[0], Slab):
+    def insert_component(
+        self, data_object, position, component, container=None
+    ):
+        """Insert `component` at `position` into `data_object.model.
+        structure`, or into `container` (a Stack found somewhere within
+        it) if given -- a Stack is a list in its own right, so this is
+        how a Component ever gets added *inside* one. Raises
+        StructureEditError, and leaves the structure untouched, if this
+        would insert a *new* Component as the first or last Component
+        of a top-level Structure -- a Stack has no such rule."""
+        is_top_level = container is None
+        target = data_object.model.structure if is_top_level else container
+
+        if is_top_level and (position == 0 or position == len(target)):
             raise StructureEditError(
-                "The first Component in a Structure must be a Slab."
-            )
-        if not isinstance(resulting_components[-1], Slab):
-            raise StructureEditError(
-                "The last Component in a Structure must be a Slab."
+                "A Component can't be inserted as the first or last "
+                "Component of a Structure."
             )
 
-    def insert_component(self, data_object, position, component):
-        """Insert `component` into `data_object.model.structure` at
-        `position`. Raises StructureEditError, and leaves the structure
-        untouched, if that would put a non-Slab first or last."""
-        structure = data_object.model.structure
-        prospective = list(structure)
-        prospective.insert(position, component)
-        self._check_boundary(True, prospective)
-
-        structure.insert(position, component)
+        target.insert(position, component)
         self.set_datastore(self._datastore)  # rebuilds the tree from scratch
 
     def remove_component(self, index):

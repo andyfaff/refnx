@@ -116,19 +116,21 @@ list.
   `DataStoreTreeModel` also owns structural editing of a Structure:
   `insert_component()`, `remove_component()`, `move_component()`, plus
   drag-and-drop (`mimeData()`/`dropMimeData()`) for reordering top-level
-  Components by dragging them in the tree. `insert_component()` funnels
-  through `_check_boundary()` (a Structure's first and last Component
-  must be a `Slab`; a nested `Stack` has no such rule). `remove_component()`
-  and `move_component()` are stricter than that: the top-level
-  fronting/backing Slabs are *pinned*, not just type-checked — neither
-  one can ever be removed, dragged elsewhere, or displaced by another
-  Component being dragged into position 0 or -1, even if the result
-  would still technically satisfy "first/last is a Slab" (e.g. dragging
-  a different Slab into the first slot is refused too, not just a
-  non-Slab). Add Component can still insert a new Slab at position
-  0/the end if explicitly asked to — that's the one path left that can
-  establish a *new* boundary Component — but nothing removes or
-  reorders its way into replacing one. The drag-and-drop implementation
+  Components by dragging them in the tree. The top-level fronting/backing
+  Slabs are *pinned*: `insert_component()`, `remove_component()`, and
+  `move_component()` all refuse, unconditionally, to touch position 0 or
+  -1 of a top-level Structure — not "only if the result wouldn't have a
+  Slab there" but "never, period" — so neither of those two Slabs can
+  ever be removed, dragged elsewhere, displaced by another Component
+  being dragged into their slot, or displaced by a *new* Component being
+  inserted into their slot either. `insert_component()` optionally takes
+  a `container` argument — a `Stack` found somewhere within the
+  Structure — to insert into, since a `Stack` is a list in its own right
+  (`UserList`) and has no first/last restriction at all; that's the only
+  way anything ever ends up *inside* a `Stack`'s own contents (fixed a
+  real gap: Add Component previously only ever inserted into the
+  top-level Structure, so a `Stack` could be added to the GUI but nothing
+  could ever be added *to* it). The drag-and-drop implementation
   deliberately doesn't serialise row-index *paths* into the dragged MIME
   data the way `treeview_gui_model.dropMimeData` does today — that's
   brittle if the tree's shape changes between drag-start and drop.
@@ -168,10 +170,16 @@ list.
   `PchipInterpolator` holds a stale module reference, taking the console
   history down with it even though that has nothing to do with the
   spline.
-- **`dialogs.py`** — `AddComponentDialog` (pick a dataset, a Component
-  type, and a position) and `default_component(kind)`. Doesn't have
-  per-type parameter-entry fields — a real `LipidLeaflet` needs nine
-  required numbers, `Spline` needs knot arrays, and replicating the
+- **`dialogs.py`** — `AddComponentDialog` (pick a dataset, a *container*
+  — the top level of its Structure, or any `Stack` found anywhere within
+  it, listed by `_containers()`/`_iter_stacks()` — a Component type, and
+  a position within that container) and `default_component(kind)`. The
+  position spinbox's range depends on the chosen container: `[1, N-1]`
+  for the top level (position 0 or N would create a new first/last
+  Component — pinned, so not offered at all), `[0, N]` for a `Stack`
+  (no such restriction). Doesn't have per-type parameter-entry fields —
+  a real `LipidLeaflet` needs nine required numbers, `Spline` needs knot
+  arrays, and replicating the
   production app's dedicated `LipidLeafletDialog`/`SplineDialog` is a
   separate, larger piece of work. Instead it builds the Component with
   reasonable placeholder values, adds it, and lets you edit every one of
@@ -357,8 +365,16 @@ actually work, not just compile:
   parameters automatically, with no explicit refresh call in the
   handler -- proving the `modelReset` → `on_structure_changed` cascade
   actually does its job;
-- adding a non-`Slab` Component at position 0 is rejected and the
+- inserting at position 0, or at `len(structure)` (the new-last
+  position), is rejected regardless of Component type and the
   Structure is left untouched;
+- adding a Component *into* a Stack grows the Stack, not the top-level
+  Structure, and position 0 (or the very end) of a Stack is allowed --
+  no first/last restriction there;
+- `AddComponentDialog` itself: the container dropdown lists "Top
+  level" plus every `Stack` found in the chosen dataset's Structure
+  (including nested ones), and the position spinbox's range is `[1,
+  N-1]` for the top level vs `[0, N]` for a `Stack`;
 - removing a Component works, is refused when a dataset row (not a
   Component) is selected, and unlinks a dependent parameter in a
   *different* dataset;

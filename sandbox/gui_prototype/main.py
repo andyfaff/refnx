@@ -30,7 +30,7 @@ from qtpy.compat import getopenfilename, getopenfilenames, getsavefilename
 
 import refnx.analysis
 from refnx.dataset import ReflectDataset
-from refnx.reflect import SLD, ReflectModel
+from refnx.reflect import SLD, ReflectModel, Stack
 from refnx.analysis import Objective, GlobalObjective, Parameter
 
 from datastore import DataObject, DataStore
@@ -464,26 +464,33 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # default to "just after whatever's selected", so the common
         # case (select a layer, add a similar one next to it) needs no
-        # spinbox fiddling. Only applies when a *top-level* Component is
-        # selected -- Add Component always targets the top level, so a
-        # selection nested inside a Stack has no directly-usable
-        # position here; leave the default at 0 and let the spinbox
-        # speak for itself.
+        # spinbox fiddling. If a Stack (or something nested inside one)
+        # is selected, default to adding *into* that Stack instead of
+        # the top level -- that's the only way anything ever ends up
+        # inside a Stack's own contents.
+        default_container = None
         default_position = 0
         selected_obj = self.tree_model.object_for_index(current)
-        if selected_obj is not None and not isinstance(
+        if isinstance(selected_obj, Stack):
+            default_container = selected_obj
+            default_position = len(selected_obj)
+        elif selected_obj is not None and not isinstance(
             selected_obj, DataObject
         ):
             parent_obj = self.tree_model.object_for_index(
                 self.tree_model.parent(current)
             )
-            if isinstance(parent_obj, DataObject):
+            if isinstance(parent_obj, Stack):
+                default_container = parent_obj
+                default_position = current.row() + 1
+            elif isinstance(parent_obj, DataObject):
                 default_position = current.row() + 1
 
         dialog = AddComponentDialog(
             self.datastore,
             default_dataset=default_dataset_name,
             default_position=default_position,
+            default_container=default_container,
             parent=self,
         )
         if not dialog.exec():
@@ -494,7 +501,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             self.tree_model.insert_component(
-                data_object, dialog.position(), component
+                data_object, dialog.position(), component, dialog.container()
             )
         except StructureEditError as e:
             self.msg(str(e))

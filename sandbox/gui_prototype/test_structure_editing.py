@@ -18,10 +18,11 @@ class _FakeAddDialog:
     """Stands in for AddComponentDialog so tests can drive
     on_add_component_triggered() without a real modal dialog."""
 
-    def __init__(self, dataset, kind, position):
+    def __init__(self, dataset, kind, position, container=None):
         self._dataset = dataset
         self._kind = kind
         self._position = position
+        self._container = container
 
     def exec(self):
         return 1  # QDialog.DialogCode.Accepted
@@ -34,6 +35,9 @@ class _FakeAddDialog:
 
     def position(self):
         return self._position
+
+    def container(self):
+        return self._container
 
 
 def test_add_component_via_dialog(qtbot, monkeypatch):
@@ -67,7 +71,8 @@ def test_add_component_rejects_invalid_boundary(qtbot, monkeypatch):
     do = datastore["e361r"]
     n_before = len(do.model.structure)
 
-    # a Spline at position 0 would become the new first Component
+    # position 0 would make this the new first Component -- rejected
+    # unconditionally now, not just because a Spline isn't a Slab
     monkeypatch.setattr(
         "main.AddComponentDialog",
         lambda *a, **k: _FakeAddDialog("e361r", "Spline", 0),
@@ -75,6 +80,74 @@ def test_add_component_rejects_invalid_boundary(qtbot, monkeypatch):
     win.on_add_component_triggered()
 
     assert len(do.model.structure) == n_before  # rejected, untouched
+
+
+def test_add_component_rejects_new_last_position_too(qtbot, monkeypatch):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    n_before = len(do.model.structure)
+
+    # position == len(structure) would append as the new last Component
+    monkeypatch.setattr(
+        "main.AddComponentDialog",
+        lambda *a, **k: _FakeAddDialog("e361r", "Slab", n_before),
+    )
+    win.on_add_component_triggered()
+
+    assert len(do.model.structure) == n_before  # rejected, untouched
+
+
+def test_add_component_into_a_stack(qtbot, monkeypatch):
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    stack = Stack([SLD(4.0)(5, 1)], name="stack")
+    do.model.structure.insert(1, stack)  # a legal, middle position
+
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    n_before = len(stack)
+    rows_before = win.parameter_model.leaf_count()
+
+    monkeypatch.setattr(
+        "main.AddComponentDialog",
+        lambda *a, **k: _FakeAddDialog(
+            "e361r", "Slab", n_before, container=stack
+        ),
+    )
+    win.on_add_component_triggered()
+
+    # the Stack grew, the top-level Structure didn't
+    assert len(stack) == n_before + 1
+    assert len(do.model.structure) == 5  # unchanged top-level count
+    assert win.parameter_model.leaf_count() == rows_before + 5
+
+
+def test_add_component_at_start_or_end_of_a_stack_is_allowed(
+    qtbot, monkeypatch
+):
+    # unlike the top level, a Stack has no first/last restriction --
+    # position 0 (or the very end) is fine
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    inner = SLD(4.0)(5, 1)
+    stack = Stack([inner], name="stack")
+    do.model.structure.insert(1, stack)
+
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    monkeypatch.setattr(
+        "main.AddComponentDialog",
+        lambda *a, **k: _FakeAddDialog("e361r", "Slab", 0, container=stack),
+    )
+    win.on_add_component_triggered()
+
+    assert len(stack) == 2
+    assert stack[0] is not inner  # the new Slab was inserted before it
 
 
 def test_remove_component_via_action(qtbot):
@@ -280,3 +353,56 @@ def test_nested_stack_component_not_draggable(qtbot):
 
     mime = win.tree_model.mimeData([nested_index])
     assert mime is None
+
+
+def test_add_component_dialog_lists_stacks_as_containers(qtbot):
+    from dialogs import AddComponentDialog
+
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    stack = Stack([SLD(4.0)(5, 1)], name="stack")
+    do.model.structure.insert(1, stack)
+
+    dialog = AddComponentDialog(datastore, default_dataset="e361r")
+    qtbot.add_widget(dialog)
+
+    labels = [
+        dialog.container_combo.itemText(i)
+        for i in range(dialog.container_combo.count())
+    ]
+    assert labels == ["Top level", "stack (inside Stack)"]
+    assert dialog.container_combo.itemData(0) is None
+    assert dialog.container_combo.itemData(1) is stack
+
+
+def test_add_component_dialog_position_range_excludes_top_level_boundary(
+    qtbot,
+):
+    from dialogs import AddComponentDialog
+
+    datastore = build_demo_datastore()  # e361r has 4 top-level Slabs
+    dialog = AddComponentDialog(datastore, default_dataset="e361r")
+    qtbot.add_widget(dialog)
+
+    # position 0 and 4 would create a new first/last Component -- not
+    # offered at all for the top level
+    assert dialog.position_spin.minimum() == 1
+    assert dialog.position_spin.maximum() == 3
+
+
+def test_add_component_dialog_position_range_allows_stack_boundary(qtbot):
+    from dialogs import AddComponentDialog
+
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    stack = Stack([SLD(4.0)(5, 1)], name="stack")
+    do.model.structure.insert(1, stack)
+
+    dialog = AddComponentDialog(
+        datastore, default_dataset="e361r", default_container=stack
+    )
+    qtbot.add_widget(dialog)
+
+    # a Stack has no first/last restriction -- the full range is offered
+    assert dialog.position_spin.minimum() == 0
+    assert dialog.position_spin.maximum() == len(stack)

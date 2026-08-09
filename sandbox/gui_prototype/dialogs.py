@@ -1,5 +1,7 @@
 """
-AddComponentDialog: picks a dataset, a Component type, and a position.
+AddComponentDialog: picks a dataset, a container (the top level of its
+Structure, or a Stack found somewhere within it), a Component type, and
+a position within that container.
 
 Deliberately doesn't have per-type parameter entry fields (a full
 LipidLeaflet needs nine required numbers, Spline needs knot arrays,
@@ -44,12 +46,37 @@ def default_component(kind):
     raise ValueError(f"Unknown component kind: {kind!r}")
 
 
+def _iter_stacks(component):
+    """Yields every Stack found within `component` -- itself, if it is
+    one, then recursing into its children (a Stack can nest another
+    Stack). Ordinary Components can't hold anything, so they're never
+    yielded here."""
+    if isinstance(component, Stack):
+        yield component
+        for child in component:
+            yield from _iter_stacks(child)
+
+
+def _containers(data_object):
+    """(label, container) pairs for every place a new Component could
+    go in `data_object`'s Structure: the top level itself (`None`),
+    plus every Stack found anywhere within it -- a Stack is the only
+    kind of Component that can hold other Components."""
+    containers = [("Top level", None)]
+    for top_level in data_object.model.structure:
+        for stack in _iter_stacks(top_level):
+            label = getattr(stack, "name", None) or "Stack"
+            containers.append((f"{label} (inside Stack)", stack))
+    return containers
+
+
 class AddComponentDialog(QtWidgets.QDialog):
     def __init__(
         self,
         datastore,
         default_dataset=None,
         default_position=0,
+        default_container=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -60,7 +87,10 @@ class AddComponentDialog(QtWidgets.QDialog):
         self.dataset_combo.addItems(datastore.names)
         if default_dataset in datastore.names:
             self.dataset_combo.setCurrentText(default_dataset)
-        self.dataset_combo.currentTextChanged.connect(
+        self.dataset_combo.currentTextChanged.connect(self._update_containers)
+
+        self.container_combo = QtWidgets.QComboBox()
+        self.container_combo.currentIndexChanged.connect(
             self._update_position_range
         )
 
@@ -68,19 +98,28 @@ class AddComponentDialog(QtWidgets.QDialog):
         self.kind_combo.addItems(COMPONENT_KINDS)
 
         self.position_spin = QtWidgets.QSpinBox()
-        self._update_position_range(self.dataset_combo.currentText())
+
+        self._update_containers(self.dataset_combo.currentText())
+        if default_container is not None:
+            self._select_container(default_container)
         self.position_spin.setValue(
-            min(default_position, self.position_spin.maximum())
+            min(
+                max(default_position, self.position_spin.minimum()),
+                self.position_spin.maximum(),
+            )
         )
 
         form = QtWidgets.QFormLayout()
         form.addRow("Dataset:", self.dataset_combo)
+        form.addRow("Add into:", self.container_combo)
         form.addRow("Component type:", self.kind_combo)
         form.addRow("Insert at position:", self.position_spin)
 
         hint = QtWidgets.QLabel(
-            "Position 0 = before everything; the last position = after "
-            "everything. Only a Slab can go first or last."
+            "At the top level, the first and last Component are pinned "
+            "-- a new Component can only go somewhere in between. Inside "
+            "a Stack there's no such restriction: position 0 = before "
+            "everything in it, the last position = after everything."
         )
         hint.setWordWrap(True)
 
@@ -96,14 +135,41 @@ class AddComponentDialog(QtWidgets.QDialog):
         layout.addWidget(hint)
         layout.addWidget(buttons)
 
-    def _update_position_range(self, dataset_name):
+    def _update_containers(self, dataset_name):
         if dataset_name not in self._datastore:
             return
-        n = len(self._datastore[dataset_name].model.structure)
-        self.position_spin.setRange(0, n)
+        self.container_combo.clear()
+        for label, container in _containers(self._datastore[dataset_name]):
+            self.container_combo.addItem(label, container)
+
+    def _select_container(self, container):
+        for i in range(self.container_combo.count()):
+            if self.container_combo.itemData(i) is container:
+                self.container_combo.setCurrentIndex(i)
+                return
+
+    def _update_position_range(self, *_args):
+        if self.container_combo.currentIndex() == -1:
+            return
+        dataset_name = self.dataset_combo.currentText()
+        if dataset_name not in self._datastore:
+            return
+        container = self.container_combo.currentData()
+        if container is None:
+            # position 0 or len(target) would insert as a *new* first/
+            # last Component of the top-level Structure -- pinned, so
+            # not offered here at all (see models.insert_component)
+            target = self._datastore[dataset_name].model.structure
+            lo, hi = 1, max(1, len(target) - 1)
+        else:
+            lo, hi = 0, len(container)
+        self.position_spin.setRange(lo, hi)
 
     def dataset_name(self):
         return self.dataset_combo.currentText()
+
+    def container(self):
+        return self.container_combo.currentData()
 
     def kind(self):
         return self.kind_combo.currentText()
