@@ -467,6 +467,80 @@ def test_fit_controller_runs_global_objective_async(qtbot):
     assert win.fit_button.text().startswith("Fit")
 
 
+def test_fit_sets_and_displays_parameter_stderr(qtbot):
+    # CurveFitter.fit() itself computes and sets Parameter.stderr for
+    # every varying parameter after a successful fit -- this just needs
+    # to be visible in the table afterward
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    thick = datastore["e361r"].model.structure[-2].thick
+    assert thick.stderr is None
+
+    with qtbot.waitSignal(win.fit_controller.finished, timeout=30000):
+        win.on_fit_clicked()
+
+    assert thick.stderr is not None
+
+    stderr_col = win.parameter_model.COLUMNS.index("stderr")
+    idx = win.parameter_model.index_for(thick, stderr_col)
+    assert idx.isValid()
+    displayed = win.parameter_model.data(idx)
+    assert displayed == f"{thick.stderr:.3g}"
+
+
+def test_stderr_column_blank_when_not_yet_fitted(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    thick = datastore["e361r"].model.structure[-2].thick
+    stderr_col = win.parameter_model.COLUMNS.index("stderr")
+    idx = win.parameter_model.index_for(thick, stderr_col)
+    assert win.parameter_model.data(idx) == ""
+
+
+def test_editing_a_value_clears_stale_stderr_for_that_dataset(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    thick_e361 = datastore["e361r"].model.structure[-2].thick
+    sld_e361 = datastore["e361r"].model.structure[-2].sld.real
+    bkg_e365 = datastore["e365r"].model.bkg
+
+    # pretend a previous fit already ran
+    thick_e361.stderr = 1.23
+    sld_e361.stderr = 0.045
+    bkg_e365.stderr = 1e-7
+
+    value_col = win.parameter_model.COLUMNS.index("value")
+    idx = win.parameter_model.index_for(thick_e361, value_col)
+    win.parameter_model.setData(idx, "220.0")
+
+    # every stderr in e361r is now stale and cleared...
+    assert thick_e361.stderr is None
+    assert sld_e361.stderr is None
+    # ...but e365r's is untouched, since nothing there changed
+    assert bkg_e365.stderr == 1e-7
+
+
+def test_editing_vary_or_bounds_does_not_clear_stderr(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    thick = datastore["e361r"].model.structure[-2].thick
+    thick.stderr = 1.23
+
+    lb_col = win.parameter_model.COLUMNS.index("lb")
+    idx = win.parameter_model.index_for(thick, lb_col)
+    win.parameter_model.setData(idx, "0.0")
+
+    assert thick.stderr == 1.23
+
+
 def test_fit_warns_and_refuses_on_infinite_bounds(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)

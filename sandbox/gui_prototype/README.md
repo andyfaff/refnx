@@ -79,6 +79,19 @@ list.
   reflected around zero), including the original's quirk of not
   special-casing `value == 0` (a zero-width `[0, 0]` bound).
 
+  A `σ` column shows `Parameter.stderr`, blank until it's actually been
+  set — `CurveFitter.fit()` already computes and sets it on every
+  varying parameter after a successful fit, so this needed no new
+  fitting logic, only somewhere in the GUI to show it. It goes stale
+  the moment anything about the dataset's model changes after that fit,
+  though, so editing a parameter's *value* by hand clears `stderr` for
+  every parameter in that dataset (`_clear_dataset_stderr`, mirroring
+  the production app's `clear_data_object_uncertainties`) — not just
+  the one that was touched, since a correlated parameter's uncertainty
+  shifts too even though its own value didn't change. Toggling `Vary`
+  or nudging a bound doesn't itself invalidate an already-run fit, so
+  neither of those touches `stderr`.
+
   `_boundary_slab_hidden_parameters(structure)` is what keeps
   thickness/iSLD/roughness/volfrac solvent for the fronting medium, and
   thickness/iSLD/volfrac solvent for the backing medium, out of
@@ -341,6 +354,11 @@ actually work, not just compile:
   the `Parameter`, not the tree) and reappears when re-checked;
 - `FitController` runs a `GlobalObjective` built from the checked
   datasets asynchronously, and total chi² drops;
+- a real fit sets and displays `Parameter.stderr` in the `σ` column
+  (blank beforehand), and editing a value by hand afterward clears
+  `stderr` for every parameter in *that* dataset but leaves another
+  dataset's untouched, while toggling `Vary` or a bound leaves it
+  alone;
 - Load Data *adds* a dataset rather than replacing the store, and
   survives a dataset with a different number of points (the actual bug
   this exposed: `PlotController` used to cache line artists and update

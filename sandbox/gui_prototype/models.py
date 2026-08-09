@@ -522,8 +522,8 @@ class ParameterTableModel(QtCore.QAbstractItemModel):
     want it included in the fit.
     """
 
-    COLUMNS = ("name", "value", "vary", "lb", "ub", "constraint")
-    HEADERS = ("Name", "Value", "Vary", "Lower", "Upper", "Constraint")
+    COLUMNS = ("name", "value", "stderr", "vary", "lb", "ub", "constraint")
+    HEADERS = ("Name", "Value", "σ", "Vary", "Lower", "Upper", "Constraint")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -714,6 +714,8 @@ class ParameterTableModel(QtCore.QAbstractItemModel):
                 return p.name
             if col == "value":
                 return f"{p.value:.6g}"
+            if col == "stderr":
+                return f"{p.stderr:.3g}" if p.stderr is not None else ""
             if col == "lb":
                 return p.bounds.lb
             if col == "ub":
@@ -787,9 +789,32 @@ class ParameterTableModel(QtCore.QAbstractItemModel):
                 self.dataChanged.emit(index, index, [role])
                 if col == "value":
                     self._notify_dependents(p)
+                    self._clear_dataset_stderr(node.dataset_name)
                 return True
 
         return False
+
+    def _clear_dataset_stderr(self, dataset_name):
+        """A value just changed by hand -- every previously-computed
+        uncertainty for that dataset is stale now, not just the edited
+        parameter's own (correlated parameters shift too), so clear
+        all of them. Mirrors the production app's
+        clear_data_object_uncertainties. Only fires on a "value" edit;
+        toggling Vary or nudging a bound doesn't itself invalidate a
+        fit that's already been run."""
+        if self._datastore is None or dataset_name not in self._datastore:
+            return
+        stderr_col = self.COLUMNS.index("stderr")
+        model = self._datastore[dataset_name].model
+        for p in model.parameters.flattened():
+            if p.stderr is None:
+                continue
+            p.stderr = None
+            node = self._leaf_node_of.get(p)
+            if node is None:
+                continue
+            idx = self.createIndex(node.row, stderr_col, node)
+            self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.EditRole])
 
     def _notify_dependents(self, parameter):
         value_col = self.COLUMNS.index("value")
