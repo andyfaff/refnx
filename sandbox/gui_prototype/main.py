@@ -58,6 +58,19 @@ def _default_model():
     return ReflectModel(structure)
 
 
+def _plot_tab(canvas, toolbar):
+    """A plot canvas with its matplotlib navigation toolbar (pan/zoom/
+    save) stacked above it -- both PlotController's Reflectivity and
+    SLD tabs get one, since a QTabWidget page can only hold a single
+    widget."""
+    container = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(toolbar)
+    layout.addWidget(canvas)
+    return container
+
+
 def build_demo_datastore():
     """
     Two datasets sharing a similar (but independently-editable) model,
@@ -187,13 +200,32 @@ class MainWindow(QtWidgets.QMainWindow):
         left_splitter.setStretchFactor(1, 1)
 
         tabs = QtWidgets.QTabWidget()
-        tabs.addTab(self.plot_controller.reflectivity_canvas, "Reflectivity")
-        tabs.addTab(self.plot_controller.sld_canvas, "SLD")
+        tabs.addTab(
+            _plot_tab(
+                self.plot_controller.reflectivity_canvas,
+                self.plot_controller.reflectivity_toolbar,
+            ),
+            "Reflectivity",
+        )
+        tabs.addTab(
+            _plot_tab(
+                self.plot_controller.sld_canvas,
+                self.plot_controller.sld_toolbar,
+            ),
+            "SLD",
+        )
 
         main_splitter = QtWidgets.QSplitter()
         main_splitter.addWidget(left_splitter)
         main_splitter.addWidget(tabs)
         main_splitter.setStretchFactor(1, 1)
+        # Qt's default splitter split is based on each side's size
+        # hint, which leaves the tree/parameter panes cramped even
+        # though their content (once columns are auto-sized to fit,
+        # see _refresh_parameter_tree_view) genuinely needs more room
+        # -- start with a much wider left pane instead of a bare
+        # roughly-even split.
+        main_splitter.setSizes([500, 700])
 
         self.fit_button = QtWidgets.QPushButton(
             "Fit checked datasets (differential evolution)"

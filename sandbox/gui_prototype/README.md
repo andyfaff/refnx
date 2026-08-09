@@ -219,7 +219,13 @@ list.
   `draw_idle()`, not `draw()`. Always clears and redraws from scratch
   rather than caching line artists, because a datastore's shape (how
   many datasets, how many points each) can change between calls in a
-  way a single fixed dataset never did.
+  way a single fixed dataset never did. Also owns
+  `reflectivity_toolbar`/`sld_toolbar` — matplotlib's standard
+  pan/zoom/save `NavigationToolbar2QT`, one per canvas — since a
+  toolbar is inherently plot-specific, not part of the rest of the
+  GUI's concerns; `main.py`'s `_plot_tab()` just stacks each canvas
+  under its own toolbar for the two `QTabWidget` pages (a tab page can
+  only hold one widget, so canvas+toolbar need a small container).
 - **`persistence.py`** — model state and session state (console text,
   window geometry) saved independently, so a pickling failure in one
   can't take down the other. Motivated by a real, reproducible bug: an
@@ -270,7 +276,11 @@ list.
   are small, fixed pixel values with no relation to what's actually in
   them, so left alone every column (Name, Value, `σ`, Lower, Upper)
   shows up truncated on every launch, needing a manual drag to widen
-  each one every single time. Reflectivity and SLD
+  each one every single time. Sizing the columns to content isn't
+  enough on its own, though — Qt's default splitter split is based on
+  each side's size *hint*, which still leaves the whole left pane
+  cramped regardless of what's inside it, so `main_splitter.setSizes()`
+  starts it off noticeably wider than an even split too. Reflectivity and SLD
   plots overlaying every dataset (right), a Fit button that builds a
   `GlobalObjective` from whichever datasets are checked and runs DE on a
   background thread — first checking that every varying parameter in
@@ -400,6 +410,11 @@ actually work, not just compile:
 - every parameter tree column but the last (which stretches) gets sized
   to fit its content on startup, rather than sitting at Qt's default
   fixed width;
+- the left pane starts out noticeably wider than an even split, not
+  just at Qt's size-hint-driven default;
+- the Reflectivity and SLD tabs each carry their own matplotlib
+  `NavigationToolbar2QT`, wired to the right canvas and actually
+  parented into the window, not just constructed and discarded;
 - parameters are grouped by Component (a "Model" group for
   scale/bkg/dq/q_offset, one group per top-level Component in Structure
   order) with only each Component's own rows as its children -- and a

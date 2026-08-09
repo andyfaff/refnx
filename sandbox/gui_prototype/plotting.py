@@ -21,6 +21,9 @@ extra draw cost doesn't matter.
 """
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import (
+    NavigationToolbar2QT as NavigationToolbar,
+)
 from matplotlib.figure import Figure
 
 
@@ -29,10 +32,12 @@ class PlotController:
         self.reflectivity_fig = Figure()
         self.reflectivity_canvas = FigureCanvas(self.reflectivity_fig)
         self.reflectivity_ax = self.reflectivity_fig.add_subplot(111)
+        self.reflectivity_toolbar = NavigationToolbar(self.reflectivity_canvas)
 
         self.sld_fig = Figure()
         self.sld_canvas = FigureCanvas(self.sld_fig)
         self.sld_ax = self.sld_fig.add_subplot(111)
+        self.sld_toolbar = NavigationToolbar(self.sld_canvas)
 
         self._reset_axes()
 

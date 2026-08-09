@@ -63,6 +63,56 @@ def test_parameter_tree_columns_sized_to_content_on_startup(
     assert resized_columns == list(range(last_col))
 
 
+def test_left_pane_starts_wider_than_the_plots(qtbot):
+    # Qt's default splitter split is based on each side's size hint,
+    # which leaves the tree/parameter panes cramped even once their
+    # columns are auto-sized to fit -- the split itself needs to start
+    # off wider, not just the columns within it
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+    win.resize(1200, 800)
+    win.show()
+    qtbot.waitExposed(win)
+
+    # the outer (tree/table vs. plots) splitter is horizontal; the
+    # inner (tree vs. table) one is vertical -- orientation picks out
+    # the one that actually matters here unambiguously
+    main_splitter = next(
+        s
+        for s in win.findChildren(QtWidgets.QSplitter)
+        if s.orientation() == QtCore.Qt.Orientation.Horizontal
+    )
+    left_width, right_width = main_splitter.sizes()
+    assert left_width > 400
+    assert left_width > right_width * 0.5
+
+
+def test_reflectivity_and_sld_tabs_have_a_matplotlib_toolbar(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
+
+    assert win.plot_controller.reflectivity_toolbar.canvas is (
+        win.plot_controller.reflectivity_canvas
+    )
+    assert (
+        win.plot_controller.sld_toolbar.canvas
+        is win.plot_controller.sld_canvas
+    )
+    assert isinstance(
+        win.plot_controller.reflectivity_toolbar, NavigationToolbar2QT
+    )
+    # both toolbars are actually parented into the tab widgets, not just
+    # constructed and discarded
+    assert set(win.findChildren(NavigationToolbar2QT)) == {
+        win.plot_controller.reflectivity_toolbar,
+        win.plot_controller.sld_toolbar,
+    }
+
+
 def test_boundary_slab_parameters_hidden(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
