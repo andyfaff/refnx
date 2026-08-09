@@ -47,6 +47,7 @@ from plotting import PlotController
 from dialogs import (
     AddComponentDialog,
     DatasetMultiSelectDialog,
+    LipidLeafletDialog,
     default_component,
 )
 from delegates import SelectAllDelegate
@@ -626,7 +627,19 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         data_object = self.datastore[dialog.dataset_name()]
-        component = default_component(dialog.kind())
+        kind = dialog.kind()
+
+        if kind == "LipidLeaflet":
+            # a specific lipid, not just a placeholder, has to be
+            # chosen for this one Component type -- cancelling here
+            # cancels the whole Add Component operation, same as
+            # cancelling the position/container dialog itself would
+            lipid_dialog = LipidLeafletDialog(parent=self)
+            if not lipid_dialog.exec():
+                return
+            component = lipid_dialog.component()
+        else:
+            component = default_component(kind)
 
         try:
             self.tree_model.insert_component(
@@ -637,7 +650,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         self.msg(
-            f"Added a {dialog.kind()} to {data_object.name} at "
+            f"Added a {kind} to {data_object.name} at "
             f"position {dialog.position()}"
         )
 

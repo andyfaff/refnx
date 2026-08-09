@@ -260,16 +260,38 @@ list.
   position spinbox's range depends on the chosen container: `[1, N-1]`
   for the top level (position 0 or N would create a new first/last
   Component — pinned, so not offered at all), `[0, N]` for a `Stack`
-  (no such restriction). Doesn't have per-type parameter-entry fields —
-  a real `LipidLeaflet` needs nine required numbers, `Spline` needs knot
-  arrays, and replicating the
-  production app's dedicated `LipidLeafletDialog`/`SplineDialog` is a
-  separate, larger piece of work. Instead it builds the Component with
-  reasonable placeholder values, adds it, and lets you edit every one of
-  those values afterward through the ordinary parameter tree — since
-  that tree is generic (it just flattens whatever `.parameters` a
-  Component happens to expose), no bespoke editing UI is needed once the
-  object exists, only a bespoke *constructor* for the ones that need it.
+  (no such restriction). Mostly doesn't have per-type parameter-entry
+  fields — `Spline` needs knot arrays, and replicating the production
+  app's dedicated `SplineDialog` is a separate, larger piece of work.
+  Instead it builds most Component types with reasonable placeholder
+  values from `default_component(kind)`, adds it, and lets you edit
+  every one of those values afterward through the ordinary parameter
+  tree — since that tree is generic (it just flattens whatever
+  `.parameters` a Component happens to expose), no bespoke editing UI
+  is needed once the object exists, only a bespoke *constructor* for
+  the ones that need it.
+
+  `LipidLeaflet` is the exception: choosing it in `AddComponentDialog`
+  brings up `LipidLeafletDialog` (a follow-up dialog, not inline —
+  cancelling it cancels the whole Add Component operation, same as
+  cancelling the position dialog itself would) to pick a known lipid,
+  and a measurement condition, from refnx's own library
+  (`refnx/reflect/_app/lipids.json` — 22 lipids with literature
+  head/tail volumes, chemical formulas, and references) rather than
+  always landing with the same fixed placeholder. It reuses that
+  library's own `Lipid` class directly
+  (`refnx.reflect._app._lipid_leaflet.Lipid` — pure Python, no Qt
+  dependency despite living next to the dialog that uses it) for the
+  neutron-scattering-length calculation, rather than reimplementing
+  formula parsing and SLD-from-formula physics that already exist and
+  are already correct. Deliberately a lighter dialog than the
+  production one, though: no structure-image display, no x-ray/energy
+  toggle (neutron-only), no live cross-updating spinboxes between area-
+  per-molecule and thickness — a picked lipid is only a starting point,
+  same as every other Component's placeholder values, and every
+  resulting value (including `reverse_monolayer`, which the production
+  dialog doesn't expose either) is still editable afterward through the
+  ordinary parameter tree once it's actually been added.
 - **`delegates.py`** — `SelectAllDelegate`, installed as the parameter
   tree's item delegate. Selects the existing text the moment a cell
   starts editing, so typing immediately replaces the whole value
@@ -394,9 +416,11 @@ list.
 
 ## What's deliberately not here
 
-No MCMC, no dedicated LipidLeaflet/Spline parameter-entry dialogs (see
-`dialogs.py` above — you can still add either, just with placeholder
-values you then edit in the parameter tree), no undo, no session
+No MCMC, no dedicated `Spline` parameter-entry dialog (see `dialogs.py`
+above — you can still add one, just with placeholder values you then
+edit in the parameter tree; `LipidLeaflet` *does* get a real, if
+lighter-weight, dialog now — see `LipidLeafletDialog` above), no undo,
+no session
 save/restore UI even though `persistence.py` supports it, no per-dataset
 visibility toggle separate from fit-inclusion (checking a dataset plots
 it, fits it, *and* shows its parameters in the tree -- deliberately, per
@@ -592,6 +616,20 @@ actually work, not just compile:
   string, which silently truncated a typed bound like `2.123e-5` down
   to `2.12`;
 - `data()` for `lb`/`ub` returns a formatted string, not a raw float.
+
+`test_lipid_leaflet_dialog.py` covers the lipid picker:
+
+- the lipid combo lists all 22 lipids from `lipids.json` plus the
+  blank placeholder; OK stays disabled until a real lipid is chosen;
+- picking a lipid populates its conditions and chemical name;
+- `component()` builds a `LipidLeaflet` whose head/tail volumes,
+  thicknesses (derived from the chosen area-per-molecule), and
+  scattering lengths match what `Lipid.neutron_scattering_lengths()`
+  computes directly, not just what the dialog displays;
+- choosing "LipidLeaflet" in `AddComponentDialog` brings up the lipid
+  picker as a follow-up dialog, and the Component it returns is what
+  actually gets inserted; cancelling the picker aborts the whole Add
+  Component operation, adding nothing.
 
 ```bash
 pip install pytest-qt   # if not already installed

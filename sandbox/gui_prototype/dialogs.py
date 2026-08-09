@@ -3,21 +3,28 @@ AddComponentDialog: picks a dataset, a container (the top level of its
 Structure, or a Stack found somewhere within it), a Component type, and
 a position within that container.
 
-Deliberately doesn't have per-type parameter entry fields (a full
-LipidLeaflet needs nine required numbers, Spline needs knot arrays,
-etc. -- replicating the production app's dedicated LipidLeafletDialog /
-SplineDialog is a separate, larger piece of work). Instead this hands
+Mostly doesn't have per-type parameter entry fields (`Spline` needs
+knot arrays, etc. -- replicating the production app's dedicated
+`SplineDialog` is a separate, larger piece of work). Instead this hands
 back a Component built with reasonable placeholder values from
 `default_component()`, which then shows up in ParameterTableModel like
 any other Component's parameters -- because that model is generic (it
 just flattens whatever `.parameters` a Component exposes), editing the
-placeholder values afterward needs no bespoke UI at all.
+placeholder values afterward needs no bespoke UI at all. `LipidLeaflet`
+is the one exception: `LipidLeafletDialog` below lets you pick a known
+lipid from refnx's own library rather than always landing with the
+same fixed placeholder.
 """
+
+import json
+from importlib import resources
 
 from qtpy import QtWidgets
 
+import refnx.reflect._app
 from refnx.reflect import SLD, LipidLeaflet, Stack
 from refnx.reflect.spline import Spline
+from refnx.reflect._app._lipid_leaflet import Lipid
 
 
 COMPONENT_KINDS = ("Slab", "LipidLeaflet", "Spline", "Stack")
@@ -232,3 +239,120 @@ class DatasetMultiSelectDialog(QtWidgets.QDialog):
 
     def selected_names(self):
         return [item.text() for item in self.list_widget.selectedItems()]
+
+
+def _load_lipid_library():
+    """Every lipid in refnx's own library (refnx/reflect/_app/lipids.json
+    -- 22 lipids with literature head/tail volumes, chemical formulas,
+    and references), keyed by name. Reuses the production app's own
+    `Lipid` class directly (it has no Qt dependency, despite living in
+    _app/_lipid_leaflet.py alongside the dialog that uses it) rather
+    than reimplementing formula parsing and SLD-from-formula
+    calculations that already exist and are already correct."""
+    pth = resources.files(refnx.reflect._app)
+    with open(pth / "lipids.json") as f:
+        entries = json.load(f)
+    return {entry["name"]: Lipid(**entry) for entry in entries}
+
+
+class LipidLeafletDialog(QtWidgets.QDialog):
+    """Pick a known lipid, and a measurement condition, from refnx's own
+    lipid library, and use it to seed a `LipidLeaflet`'s area-per-
+    molecule, head/tail volumes and thicknesses, and neutron scattering
+    lengths -- computed the same way the production app's own
+    `LipidLeafletDialog` does (reusing its `Lipid` class directly, not
+    reimplementing the physics), just without that dialog's structure-
+    image display, x-ray/energy toggle, or live cross-updating
+    spinboxes (area-per-molecule vs. thickness). A picked lipid is only
+    a starting point, same as `default_component()`'s placeholders for
+    every other Component type: every resulting value, including
+    `reverse_monolayer`, is still editable afterward through the
+    ordinary parameter tree once the Component's actually been added,
+    so this dialog doesn't need to expose them all itself.
+    """
+
+    DEFAULT_APM = 50.0  # Å^2 -- matches default_component("LipidLeaflet")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Lipid Leaflet")
+        self._lipids = _load_lipid_library()
+
+        self.lipid_combo = QtWidgets.QComboBox()
+        self.lipid_combo.addItem("")
+        self.lipid_combo.addItems(sorted(self._lipids))
+        self.lipid_combo.currentTextChanged.connect(self._on_lipid_changed)
+
+        self.condition_combo = QtWidgets.QComboBox()
+
+        self.chemical_name_label = QtWidgets.QLabel()
+        self.chemical_name_label.setWordWrap(True)
+
+        self.apm_spin = QtWidgets.QDoubleSpinBox()
+        self.apm_spin.setRange(1.0, 1000.0)
+        self.apm_spin.setValue(self.DEFAULT_APM)
+        self.apm_spin.setSuffix(" Å²")
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Lipid:", self.lipid_combo)
+        form.addRow("Condition:", self.condition_combo)
+        form.addRow("Chemical name:", self.chemical_name_label)
+        form.addRow("Area per molecule:", self.apm_spin)
+
+        hint = QtWidgets.QLabel(
+            "Picking a lipid fills in head/tail volumes and neutron "
+            "scattering lengths for a fully-protonated solvent -- "
+            "every value, including area per molecule, can still be "
+            "edited afterward in the parameter tree once it's added."
+        )
+        hint.setWordWrap(True)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self._ok_button = buttons.button(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+        )
+        self._ok_button.setEnabled(False)  # until a real lipid is picked
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(hint)
+        layout.addWidget(buttons)
+
+    def _on_lipid_changed(self, name):
+        self.condition_combo.clear()
+        self.chemical_name_label.setText("")
+        lipid = self._lipids.get(name)
+        self._ok_button.setEnabled(lipid is not None)
+        if lipid is None:
+            return
+        self.condition_combo.addItems(list(lipid.conditions))
+        self.chemical_name_label.setText(lipid.chemical_name or "")
+
+    def component(self):
+        """The `LipidLeaflet` built from whichever lipid/condition/APM
+        are currently selected. Only meaningful after the dialog has
+        been accepted with a real lipid chosen -- callers check that
+        via `exec()`'s return value, same as every other dialog here."""
+        lipid = self._lipids[self.lipid_combo.currentText()]
+        condition = self.condition_combo.currentText()
+        vm_heads, vm_tails = lipid.conditions[condition]
+        b_heads, b_tails = lipid.neutron_scattering_lengths(condition)
+
+        apm = self.apm_spin.value()
+        return LipidLeaflet(
+            apm,
+            b_heads,
+            vm_heads,
+            vm_heads / apm,
+            b_tails,
+            vm_tails,
+            vm_tails / apm,
+            3,
+            3,
+            name=lipid.name,
+        )
