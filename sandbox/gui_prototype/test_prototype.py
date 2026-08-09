@@ -219,6 +219,103 @@ def test_load_model_applies_only_to_selected_dataset(
     assert len(datastore["e361r"].model.structure) == 4
 
 
+def test_load_model_unlinks_cross_dataset_dependents(
+    qtbot, tmp_path, monkeypatch
+):
+    # a real, pre-existing gap fixed alongside Copy Model: replacing a
+    # dataset's model via Load Model used to leave dangling constraints
+    # on whatever used to depend on its old parameters.
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    old_thick = datastore["e365r"].model.structure[-2].thick
+    dependent = datastore["e361r"].model.structure[-2].thick
+    dependent.constraint = old_thick
+
+    e365_index = win.tree_model.index(1, 0)
+    win.tree_view.setCurrentIndex(e365_index)
+
+    new_model = ReflectModel(SLD(2.07) | SLD(4.5)(20, 2) | SLD(6.36)(0, 3))
+    mpath = tmp_path / "other_model.pkl"
+    persistence.save_model(new_model, mpath)
+    monkeypatch.setattr(
+        "main.getopenfilename", lambda *a, **k: (str(mpath), True)
+    )
+    win.on_load_model_triggered()
+
+    assert dependent.constraint is None
+
+
+class _FakeCopyModelDialog:
+    def __init__(self, source, target):
+        self._source = source
+        self._target = target
+
+    def exec(self):
+        return 1  # QDialog.DialogCode.Accepted
+
+    def source_name(self):
+        return self._source
+
+    def target_name(self):
+        return self._target
+
+
+def test_copy_model_via_dialog(qtbot, monkeypatch):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do1 = datastore["e361r"]
+    do2 = datastore["e365r"]
+    do1.model.bkg.value = 1.23e-6
+
+    monkeypatch.setattr(
+        "main.CopyModelDialog",
+        lambda *a, **k: _FakeCopyModelDialog("e361r", "e365r"),
+    )
+    win.on_copy_model_triggered()
+
+    # e365r's model now matches e361r's values...
+    assert do2.model.bkg.value == 1.23e-6
+    # ...but it's an independent copy, not the same object
+    assert do2.model is not do1.model
+    do1.model.bkg.value = 9.9e-6
+    assert do2.model.bkg.value == 1.23e-6
+
+
+def test_copy_model_requires_two_datasets(qtbot):
+    datastore = build_demo_datastore()
+    datastore.remove("e365r")
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    win.on_copy_model_triggered()  # should just message, not crash
+    assert len(datastore) == 1
+
+
+def test_copy_model_unlinks_cross_dataset_dependents(qtbot, monkeypatch):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do1 = datastore["e361r"]
+    do2 = datastore["e365r"]
+
+    old_target_thick = do2.model.structure[-2].thick
+    dependent = do1.model.structure[-2].sld.real
+    dependent.constraint = old_target_thick
+
+    monkeypatch.setattr(
+        "main.CopyModelDialog",
+        lambda *a, **k: _FakeCopyModelDialog("e361r", "e365r"),
+    )
+    win.on_copy_model_triggered()
+
+    assert dependent.constraint is None
+
+
 def test_save_model_round_trips(qtbot, tmp_path, monkeypatch):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)

@@ -72,7 +72,12 @@ currently-unchecked dataset just means checking it first.
   `ParameterTableModel`, because it has to search *every* dataset for a
   dependent parameter, including ones currently hidden by an unchecked
   fit-inclusion box — `ParameterTableModel` only ever knows about
-  checked datasets.
+  checked datasets. Used both when a Component is removed and (see
+  `main.py`) whenever a dataset's whole model is replaced — Load Model
+  had the same gap for a while: it swapped `data_object.model` for a
+  new one without unlinking whatever used to depend on the old one's
+  parameters, found and fixed while wiring up Copy Model, which is the
+  same operation with a different source.
 - **`controllers.py`** — `FitController`, a reusable `QObject` wrapping
   `CurveFitter` on a background `QThread`. Properly async
   (`started`/`progress`/`finished` signals) — no nested `QEventLoop`,
@@ -106,6 +111,10 @@ currently-unchecked dataset just means checking it first.
   that table is generic (it just flattens whatever `.parameters` a
   Component happens to expose), no bespoke editing UI is needed once the
   object exists, only a bespoke *constructor* for the ones that need it.
+  Also `CopyModelDialog` — explicit From/To dataset combo boxes, rather
+  than "copy the selected dataset's model somewhere", so the direction
+  is never ambiguous regardless of what's currently selected in the
+  tree.
 - **`main.py`** — wires it all into a `QMainWindow`: dataset tree
   (top-left, checkboxes control fit inclusion, drag Components to
   reorder them) drives highlighting in the parameter table (bottom-left,
@@ -118,8 +127,9 @@ currently-unchecked dataset just means checking it first.
   immediately. **File** menu: *Load Data...* (adds one or more new
   datasets — doesn't replace what's already loaded — each starting from
   a copy of the currently-selected dataset's model, or a bare default if
-  none is selected), *Load Model...* / *Save Model...* (apply to
-  whichever dataset is currently selected in the tree), *Remove Selected
+  none is selected), *Load Model...* / *Copy Model...* / *Save Model...*
+  (apply to whichever dataset is currently selected in the tree, except
+  Copy Model which has its own explicit source/target), *Remove Selected
   Dataset*. **Structure** menu: *Add Component...* (choose dataset, type,
   and position — a `QSpinBox`, not just "append"), *Remove Selected
   Component* (also unlinks any parameter, anywhere, that depended on
@@ -127,7 +137,10 @@ currently-unchecked dataset just means checking it first.
   `on_structure_changed`, connected to `DataStoreTreeModel.modelReset`,
   is what refreshes the parameter table and plots after *any* structural
   edit — add, remove, or a drag-and-drop reorder — without each of those
-  three call sites needing to remember to do it themselves.
+  three call sites needing to remember to do it themselves. Load Model
+  and Copy Model both go through one `_replace_model()` helper, since
+  swapping a dataset's model out wholesale is the same operation either
+  way regardless of where the replacement comes from — see below.
 
 ## What's deliberately not here
 
@@ -185,6 +198,13 @@ actually work, not just compile:
   now it always redraws from scratch);
 - Load Model / Save Model apply only to the selected dataset, leaving
   others untouched;
+- Load Model unlinks any parameter, in any dataset, that depended on
+  the model it's replacing (the pre-existing gap fixed alongside Copy
+  Model);
+- Copy Model copies by value, not reference (mutating the source
+  afterward doesn't touch the copy), refuses same-dataset source/target,
+  handles there being only one dataset loaded without crashing, and also
+  unlinks dependents of whatever model it's replacing;
 - removing a dataset actually removes it from the tree and table.
 
 `test_structure_editing.py` covers Add/Remove/reorder Component:

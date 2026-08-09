@@ -39,7 +39,7 @@ from models import (
 )
 from controllers import FitController
 from plotting import PlotController
-from dialogs import AddComponentDialog, default_component
+from dialogs import AddComponentDialog, CopyModelDialog, default_component
 import persistence
 
 
@@ -181,6 +181,9 @@ class MainWindow(QtWidgets.QMainWindow):
         load_model_action = file_menu.addAction("Load Model...")
         load_model_action.triggered.connect(self.on_load_model_triggered)
 
+        copy_model_action = file_menu.addAction("Copy Model...")
+        copy_model_action.triggered.connect(self.on_copy_model_triggered)
+
         file_menu.addSeparator()
 
         save_model_action = file_menu.addAction("Save Model...")
@@ -278,9 +281,54 @@ class MainWindow(QtWidgets.QMainWindow):
             self.msg(f"Couldn't load {path!r} as a model: {e!r}")
             return
 
-        data_object.model = model
+        self._replace_model(data_object, model, str(path))
+
+    def on_copy_model_triggered(self):
+        if len(self.datastore) < 2:
+            self.msg("Need at least two datasets loaded to copy a model.")
+            return
+
+        default = self._selected_data_object()
+        default_name = default.name if default is not None else None
+
+        dialog = CopyModelDialog(
+            self.datastore, default_source=default_name, parent=self
+        )
+        if not dialog.exec():
+            return
+
+        source_name = dialog.source_name()
+        target_name = dialog.target_name()
+        if source_name == target_name:
+            self.msg("Source and target datasets must be different.")
+            return
+
+        source = self.datastore[source_name]
+        target = self.datastore[target_name]
+        self._replace_model(target, deepcopy(source.model), source_name)
+
+    def _replace_model(self, data_object, new_model, source_description):
+        """Swap `data_object`'s model out entirely, unlinking any
+        parameter elsewhere -- including in a different, currently
+        unchecked dataset -- that was constrained to depend on one of
+        the parameters going away. Shared by Load Model and Copy Model,
+        since both are really the same operation with a different
+        source for the replacement model."""
+        old_parameters = list(data_object.model.parameters.flattened())
+        unlinked = unlink_dependents(self.datastore, old_parameters)
+
+        data_object.model = new_model
         self._refresh()
-        self.msg(f"Loaded model from {path} onto {data_object.name}")
+
+        if unlinked:
+            self.msg(
+                f"Set {data_object.name}'s model from {source_description}; "
+                f"unlinked {len(unlinked)} dependent parameter(s) elsewhere."
+            )
+        else:
+            self.msg(
+                f"Set {data_object.name}'s model from {source_description}"
+            )
 
     def on_save_model_triggered(self):
         data_object = self._selected_data_object()
