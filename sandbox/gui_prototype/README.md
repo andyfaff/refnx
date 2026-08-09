@@ -317,7 +317,16 @@ list.
   visible immediately. **File** menu: *Load Data...* (adds one or more new
   datasets — doesn't replace what's already loaded — each starting from
   a copy of the currently-selected dataset's model, or a bare default if
-  none is selected), *Load Model...* / *Save Model...* (apply to
+  none is selected), *Reload Datasets* (`Ctrl+R`; re-reads every loaded
+  dataset from whatever file it was originally loaded from — a live
+  experiment still appending counts to the same file, say. No separate
+  path-tracking needed for this: `ReflectDataset`/`Data1D` already
+  record their own source file as `.filename` when constructed from
+  one, and already have a `.refresh()` that re-reads from exactly that
+  path — `on_reload_data_triggered()` just calls it per dataset,
+  skipping (not erroring on) any dataset that isn't backed by a file,
+  and catching a failed reload for one dataset without stopping the
+  rest), *Load Model...* / *Save Model...* (apply to
   whichever dataset is currently selected in the tree), *Remove Selected
   Dataset*. **Structure** menu: *Add Component...* (`Ctrl++`; choose
   dataset, container, type, and position — a `QSpinBox`, not just
@@ -485,6 +494,10 @@ actually work, not just compile:
   this exposed: `PlotController` used to cache line artists and update
   them in place, which breaks the moment the x-array's shape changes —
   now it always redraws from scratch);
+- Reload Datasets calls `.refresh()` on every dataset that has a source
+  file, skips (without erroring on) one that doesn't, and a failed
+  reload for one dataset doesn't stop the rest from reloading; the
+  action carries the `Ctrl+R` shortcut;
 - Load Model / Save Model apply only to the selected dataset, leaving
   others untouched;
 - Load Model unlinks any parameter, in any dataset, that depended on

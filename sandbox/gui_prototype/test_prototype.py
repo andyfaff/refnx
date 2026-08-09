@@ -796,6 +796,79 @@ def test_load_data_adds_rather_than_replaces(monkeypatch, qtbot):
     assert win.tree_model.rowCount() == 3
 
 
+def test_reload_data_calls_refresh_on_datasets_with_a_file(qtbot, monkeypatch):
+    # build_demo_datastore's datasets are loaded from real files, so
+    # they already carry their own source path as dataset.filename --
+    # no separate path-tracking needed, refresh() re-reads from exactly
+    # that path
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+    assert all(do.dataset.filename is not None for do in datastore)
+
+    refreshed = []
+    for do in datastore:
+        monkeypatch.setattr(
+            do.dataset, "refresh", lambda name=do.name: refreshed.append(name)
+        )
+
+    win.on_reload_data_triggered()
+
+    assert set(refreshed) == set(datastore.names)
+
+
+def test_reload_data_skips_datasets_without_a_file(qtbot):
+    import numpy as np
+    from refnx.dataset import ReflectDataset
+
+    datastore = build_demo_datastore()
+    in_memory = ReflectDataset(
+        data=(np.array([0.01, 0.02]), np.array([1.0, 0.5]))
+    )
+    assert in_memory.filename is None
+    datastore.add(DataObject("in-memory", in_memory, _default_model()))
+
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    win.on_reload_data_triggered()  # should not raise
+
+
+def test_reload_data_reports_failures_without_stopping_others(
+    qtbot, monkeypatch
+):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do1 = datastore["e361r"]
+    do2 = datastore["e365r"]
+
+    def boom():
+        raise OSError("file vanished")
+
+    monkeypatch.setattr(do1.dataset, "refresh", boom)
+    refreshed = []
+    monkeypatch.setattr(
+        do2.dataset, "refresh", lambda: refreshed.append(do2.name)
+    )
+
+    win.on_reload_data_triggered()  # should not raise despite do1 failing
+
+    assert refreshed == [do2.name]
+
+
+def test_reload_datasets_action_has_ctrl_r_shortcut(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    actions = {a.text(): a for a in win.menuBar().actions()}
+    file_menu = actions["&File"].menu()
+    by_text = {a.text(): a for a in file_menu.actions()}
+    assert by_text["Reload Datasets"].shortcut().toString() == "Ctrl+R"
+
+
 def test_load_model_applies_only_to_selected_dataset(
     qtbot, tmp_path, monkeypatch
 ):

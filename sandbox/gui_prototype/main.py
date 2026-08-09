@@ -250,6 +250,10 @@ class MainWindow(QtWidgets.QMainWindow):
         load_model_action = file_menu.addAction("Load Model...")
         load_model_action.triggered.connect(self.on_load_model_triggered)
 
+        reload_data_action = file_menu.addAction("Reload Datasets")
+        reload_data_action.setShortcut(QtGui.QKeySequence("Ctrl+R"))
+        reload_data_action.triggered.connect(self.on_reload_data_triggered)
+
         file_menu.addSeparator()
 
         save_model_action = file_menu.addAction("Save Model...")
@@ -391,6 +395,42 @@ class MainWindow(QtWidgets.QMainWindow):
             self.msg(f"Loaded {data_object.name} from {path}")
 
         self._refresh()
+
+    def on_reload_data_triggered(self):
+        """Re-reads every loaded dataset from whatever file it was
+        originally loaded from -- e.g. a live experiment still
+        appending counts to the same file. No separate path-tracking
+        needed: ReflectDataset already records its own source file as
+        `.filename` when constructed from one (`build_demo_datastore`'s
+        datasets included, since they're loaded from real files too),
+        and `.refresh()` re-reads from exactly that path. A dataset
+        that isn't backed by a file (constructed purely in memory) is
+        just skipped, not an error."""
+        reloaded, skipped, failed = [], [], []
+        for data_object in self.datastore:
+            filename = getattr(data_object.dataset, "filename", None)
+            if filename is None:
+                skipped.append(data_object.name)
+                continue
+            try:
+                data_object.dataset.refresh()
+            except Exception as e:
+                failed.append(f"{data_object.name} ({e!r})")
+            else:
+                reloaded.append(data_object.name)
+
+        self._update_plots_and_chi2()
+
+        if not reloaded and not failed:
+            self.msg("No loaded dataset has a file to reload from.")
+            return
+
+        parts = [f"Reloaded {len(reloaded)} dataset(s)"]
+        if skipped:
+            parts.append(f"{len(skipped)} skipped (no source file)")
+        if failed:
+            parts.append(f"{len(failed)} failed: {'; '.join(failed)}")
+        self.msg(", ".join(parts))
 
     def on_load_model_triggered(self):
         data_object = self._selected_data_object()
