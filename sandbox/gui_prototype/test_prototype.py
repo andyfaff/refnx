@@ -35,7 +35,92 @@ def test_multiple_datasets_all_displayed(qtbot):
     # not just whichever is currently selected
     dataset_names_in_table = {name for name, _ in win.parameter_model._rows}
     assert dataset_names_in_table == set(datastore.names)
-    assert win.parameter_model.rowCount() == 48  # 24 params x 2 datasets
+    # 24 params x 2 datasets, minus 5 hidden per dataset (thick/isld/
+    # rough for the first Slab, thick/isld for the last)
+    assert win.parameter_model.rowCount() == 38
+
+
+def test_boundary_slab_parameters_hidden(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    structure = datastore["e361r"].model.structure
+    first, last = structure[0], structure[-1]
+    shown = win.parameter_model._row_of  # Parameter -> row, only shown ones
+
+    # first Slab: thickness, iSLD, and roughness are all hidden
+    assert first.thick not in shown
+    assert first.sld.imag not in shown
+    assert first.rough not in shown
+    # ...but its SLD and volfrac solvent are still shown
+    assert first.sld.real in shown
+    assert first.vfsolv in shown
+
+    # last Slab: thickness and iSLD are hidden, but roughness stays --
+    # that's a physically meaningful interface, unlike the first Slab's
+    assert last.thick not in shown
+    assert last.sld.imag not in shown
+    assert last.rough in shown
+    assert last.sld.real in shown
+    assert last.vfsolv in shown
+
+    # a middle Slab is untouched
+    middle = structure[1]
+    assert middle.thick in shown
+    assert middle.sld.imag in shown
+    assert middle.rough in shown
+
+
+def test_boundary_hiding_follows_reorder(qtbot):
+    # dragging a different Slab into the first position should hide
+    # *its* thick/isld/rough and reveal the old first Slab's, since
+    # "first" is a position, not a fixed identity
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    structure = datastore["e361r"].model.structure
+    old_first = structure[0]
+    polymer = structure[2]
+
+    do_index = win.tree_model.index(0, 0)
+    source_index = win.tree_model.index(2, 0, do_index)  # polymer
+    mime = win.tree_model.mimeData([source_index])
+    ok = win.tree_model.dropMimeData(
+        mime, QtCore.Qt.DropAction.MoveAction, 0, 0, do_index
+    )
+    assert ok
+    assert structure[0] is polymer
+
+    shown = win.parameter_model._row_of
+    assert polymer.thick not in shown
+    assert old_first.thick in shown  # no longer first, no longer hidden
+
+
+def test_nested_stack_slab_not_treated_as_boundary(qtbot):
+    from refnx.reflect import SLD, Stack
+
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    inner_slab = SLD(4.0)(5, 1)
+    stack = Stack([inner_slab], name="stack")
+    # a Stack can only legally sit in the *middle* of a Structure --
+    # refnx itself requires the first/last Component to be a Slab (or
+    # MixedSlab/MagneticSlab) -- so this inserts it between the first
+    # and second components, not at position 0.
+    do.model.structure.insert(1, stack)
+
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    shown = win.parameter_model._row_of
+    # the Stack itself isn't a Slab, so nothing about it is hidden, and
+    # the Slab *inside* it -- despite being "first" within the Stack --
+    # isn't a top-level Structure boundary, so it's untouched too
+    assert inner_slab.thick in shown
+    assert inner_slab.sld.imag in shown
+    assert inner_slab.rough in shown
 
 
 def test_tree_selection_highlights_without_hiding_other_rows(qtbot):
@@ -169,7 +254,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
     win = MainWindow(datastore)
     qtbot.add_widget(win)
 
-    assert win.parameter_model.rowCount() == 48
+    assert win.parameter_model.rowCount() == 38
 
     e365_index = win.tree_model.index(1, 0)
     win.tree_model.setData(
@@ -179,7 +264,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
     )
 
     # e365r's rows should be gone, e361r's should still be there
-    assert win.parameter_model.rowCount() == 24
+    assert win.parameter_model.rowCount() == 19
     assert {name for name, _ in win.parameter_model._rows} == {"e361r"}
 
     # a constraint made while it was checked should survive being
@@ -195,7 +280,7 @@ def test_unchecking_a_dataset_hides_its_parameters_from_the_table(qtbot):
         Qt.CheckState.Checked.value,
         Qt.ItemDataRole.CheckStateRole,
     )
-    assert win.parameter_model.rowCount() == 48
+    assert win.parameter_model.rowCount() == 38
     assert thick_e365.constraint is thick_e361
 
 
@@ -474,4 +559,4 @@ def test_remove_dataset(qtbot):
     assert len(datastore) == 1
     assert "e365r" not in datastore
     assert win.tree_model.rowCount() == 1
-    assert win.parameter_model.rowCount() == 24
+    assert win.parameter_model.rowCount() == 19

@@ -26,6 +26,38 @@ from refnx.reflect import Slab, Stack
 from datastore import DataObject
 
 
+def _boundary_slab_hidden_parameters(structure):
+    """
+    Which Parameters shouldn't be shown for the top-level fronting/
+    backing Slabs of a Structure: thickness and iSLD don't mean
+    anything for a semi-infinite medium, and neither does roughness for
+    the very first one (there's nothing above it to roughen against).
+    Roughness for the *last* Slab is kept -- that's the backing medium's
+    interface with whatever's above it, which is physically meaningful.
+
+    Only applies to a Slab that's actually a top-level Structure member
+    (position 0 or -1); a Slab nested inside a Stack has no such
+    "boundary" meaning, so nothing is hidden for it.
+    """
+    hidden = set()
+    if not len(structure):
+        return hidden
+
+    first = structure[0]
+    if isinstance(first, Slab):
+        hidden.add(first.thick)
+        hidden.add(first.sld.imag)
+        hidden.add(first.rough)
+
+    if len(structure) > 1:
+        last = structure[-1]
+        if isinstance(last, Slab):
+            hidden.add(last.thick)
+            hidden.add(last.sld.imag)
+
+    return hidden
+
+
 class StructureEditError(Exception):
     """Raised when an add/remove/move would leave a top-level Structure
     without a Slab as its first and/or last Component."""
@@ -367,7 +399,12 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
             for data_object in datastore:
                 if not data_object.in_fit:
                     continue
+                hidden = _boundary_slab_hidden_parameters(
+                    data_object.model.structure
+                )
                 for p in data_object.model.parameters.flattened():
+                    if p in hidden:
+                        continue
                     self._rows.append((data_object.name, p))
         self._row_of = {p: i for i, (_, p) in enumerate(self._rows)}
         self.endResetModel()
