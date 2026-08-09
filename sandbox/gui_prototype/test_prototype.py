@@ -518,6 +518,63 @@ def test_auto_limits_only_touches_varying_parameters(qtbot):
     assert (fixed.bounds.lb, fixed.bounds.ub) == original_bounds
 
 
+def test_bounds_hidden_and_uneditable_unless_varying(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    fixed = datastore["e361r"].model.structure[1].thick  # not set to vary
+    assert not fixed.vary
+    lb_col = win.parameter_model.COLUMNS.index("lb")
+    ub_col = win.parameter_model.COLUMNS.index("ub")
+    lb_idx = win.parameter_model.index_for(fixed, lb_col)
+    ub_idx = win.parameter_model.index_for(fixed, ub_col)
+
+    assert win.parameter_model.data(lb_idx) == ""
+    assert win.parameter_model.data(ub_idx) == ""
+    assert not (win.parameter_model.flags(lb_idx) & Qt.ItemFlag.ItemIsEditable)
+    assert not (win.parameter_model.flags(ub_idx) & Qt.ItemFlag.ItemIsEditable)
+
+    varying = datastore["e361r"].model.structure[-2].thick  # set to vary
+    assert varying.vary
+    lb_idx2 = win.parameter_model.index_for(varying, lb_col)
+    ub_idx2 = win.parameter_model.index_for(varying, ub_col)
+
+    assert win.parameter_model.data(lb_idx2) == f"{varying.bounds.lb:.6g}"
+    assert win.parameter_model.data(ub_idx2) == f"{varying.bounds.ub:.6g}"
+    assert win.parameter_model.flags(lb_idx2) & Qt.ItemFlag.ItemIsEditable
+    assert win.parameter_model.flags(ub_idx2) & Qt.ItemFlag.ItemIsEditable
+
+
+def test_toggling_vary_refreshes_bounds_visibility(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    fixed = datastore["e361r"].model.structure[1].thick
+    assert not fixed.vary
+
+    vary_col = win.parameter_model.COLUMNS.index("vary")
+    lb_col = win.parameter_model.COLUMNS.index("lb")
+    vary_idx = win.parameter_model.index_for(fixed, vary_col)
+    lb_idx = win.parameter_model.index_for(fixed, lb_col)
+
+    assert win.parameter_model.data(lb_idx) == ""
+
+    seen = []
+    win.parameter_model.dataChanged.connect(
+        lambda tl, br, roles: seen.append((tl.column(), br.column()))
+    )
+    win.parameter_model.setData(
+        vary_idx, Qt.CheckState.Checked.value, Qt.ItemDataRole.CheckStateRole
+    )
+
+    assert fixed.vary
+    assert win.parameter_model.data(lb_idx) == f"{fixed.bounds.lb:.6g}"
+    # the lb/ub columns were told to refresh, not just the checkbox cell
+    assert (lb_col, win.parameter_model.COLUMNS.index("ub")) in seen
+
+
 def test_auto_limits_button_click(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)

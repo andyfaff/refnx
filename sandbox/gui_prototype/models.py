@@ -729,7 +729,12 @@ class ParameterTableModel(QtCore.QAbstractItemModel):
         if isinstance(obj, Parameter):
             if col == "vary":
                 return base | Qt.ItemFlag.ItemIsUserCheckable
-            if col in ("value", "lb", "ub") and obj.constraint is None:
+            if col == "value" and obj.constraint is None:
+                return base | Qt.ItemFlag.ItemIsEditable
+            # bounds are meaningless (and hidden, see _parameter_data)
+            # for a parameter that isn't currently varying -- nothing
+            # to fit against them, so nothing to edit either
+            if col in ("lb", "ub") and obj.constraint is None and obj.vary:
                 return base | Qt.ItemFlag.ItemIsEditable
             return base
 
@@ -768,9 +773,9 @@ class ParameterTableModel(QtCore.QAbstractItemModel):
             if col == "stderr":
                 return f"{p.stderr:.3g}" if p.stderr is not None else ""
             if col == "lb":
-                return f"{p.bounds.lb:.6g}"
+                return f"{p.bounds.lb:.6g}" if p.vary else ""
             if col == "ub":
-                return f"{p.bounds.ub:.6g}"
+                return f"{p.bounds.ub:.6g}" if p.vary else ""
             if col == "constraint":
                 return repr(p.constraint) if p.constraint is not None else ""
 
@@ -818,6 +823,18 @@ class ParameterTableModel(QtCore.QAbstractItemModel):
             if role == Qt.ItemDataRole.CheckStateRole and col == "vary":
                 p.vary = value == Qt.CheckState.Checked.value
                 self.dataChanged.emit(index, index, [role])
+                # lb/ub are hidden (and non-editable) unless the
+                # parameter varies -- that visibility just flipped, so
+                # those cells need to be told to re-query data()/
+                # flags(), not just the checkbox's own cell
+                node = index.internalPointer()
+                lb_idx = self.createIndex(
+                    node.row, self.COLUMNS.index("lb"), node
+                )
+                ub_idx = self.createIndex(
+                    node.row, self.COLUMNS.index("ub"), node
+                )
+                self.dataChanged.emit(lb_idx, ub_idx)
                 return True
 
             if role == Qt.ItemDataRole.EditRole and col in (

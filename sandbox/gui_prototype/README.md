@@ -93,6 +93,15 @@ list.
   reflected around zero), including the original's quirk of not
   special-casing `value == 0` (a zero-width `[0, 0]` bound).
 
+  `Lower`/`Upper` are blank, and not editable, for any parameter that
+  isn't currently varying — a fixed parameter's bounds don't mean
+  anything (nothing's being fitted against them), so there's nothing
+  worth showing or letting you edit until `Vary` is checked. Toggling
+  `Vary` doesn't just refresh its own cell: `setData()` also emits
+  `dataChanged` across the `lb`/`ub` columns for that row, so the
+  bounds actually appear (or disappear) immediately rather than only
+  on the next full rebuild.
+
   A `σ` column shows `Parameter.stderr`, blank until it's actually been
   set — `CurveFitter.fit()` already computes and sets it on every
   varying parameter after a successful fit, so this needed no new
@@ -490,6 +499,10 @@ actually work, not just compile:
 - Auto Limits sets `[0, 2*value]` (or reflected, for a negative value)
   on every *varying* parameter and leaves fixed ones alone, both called
   directly and through an actual button click;
+- `Lower`/`Upper` are blank and not editable for a fixed parameter, show
+  the real bounds and become editable the moment it's varying, and
+  toggling `Vary` refreshes both columns immediately rather than only
+  on the next rebuild;
 - Fit refuses to start, and never touches `FitController`, if any
   varying parameter has a non-finite bound — and doesn't false-positive
   on the demo datastore's already-finite bounds;
