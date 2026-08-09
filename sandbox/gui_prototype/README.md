@@ -249,7 +249,19 @@ list.
   background thread — first checking that every varying parameter in
   that objective has finite bounds (DE can't work without them), and
   refusing to start, with a status-bar message naming the offending
-  parameters, if not. Starts up with two datasets (`e361r.txt` and
+  parameters, if not. `_set_fit_running_ui_state()` disables the
+  navigation tree, parameter tree, Auto Limits, and the File/Structure/
+  Parameters menus for the duration of a fit — not cosmetic:
+  `CurveFitter.fit()` continuously reads *and writes* the fitted
+  model's `Parameter` objects from the background thread
+  (`Objective.setp()` every iteration, `chisqr()` every progress
+  callback), so editing/renaming/linking/restructuring the same models
+  from the GUI thread at the same time is a real, unsynchronized data
+  race between two threads touching the same Python/refnx objects —
+  implicated in a reported crash after running several fits in a row.
+  Re-enabled only once `on_fit_finished` confirms the background thread
+  has actually stopped, not any earlier. Starts up with two datasets
+  (`e361r.txt` and
   `e365r.txt` from `refnx.analysis.tests`) so multi-dataset behaviour is
   visible immediately. **File** menu: *Load Data...* (adds one or more new
   datasets — doesn't replace what's already loaded — each starting from
@@ -397,6 +409,13 @@ actually work, not just compile:
   `stderr` for every parameter in *that* dataset but leaves another
   dataset's untouched, while toggling `Vary` or a bound leaves it
   alone;
+- the navigation tree, parameter tree, Auto Limits, and the
+  model-mutating menus are all disabled the moment a fit starts and
+  re-enabled only once it's genuinely finished;
+- running several full fit cycles back to back (start, wait for
+  `finished`, repeat) settles into the same clean state every time —
+  the regression test for a reported segfault after clicking Fit
+  several times in a row;
 - Load Data *adds* a dataset rather than replacing the store, and
   survives a dataset with a different number of points (the actual bug
   this exposed: `PlotController` used to cache line artists and update

@@ -259,6 +259,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.on_link_equivalent_triggered
         )
 
+        # everything in these three menus mutates a DataObject's model
+        # (or the datastore itself) -- see _set_fit_running_ui_state
+        self._model_mutating_menus = [
+            file_menu,
+            structure_menu,
+            parameters_menu,
+        ]
+
     def msg(self, text, timeout=8000):
         # non-modal, same reasoning as the production app: routine
         # messages shouldn't interrupt the workflow with a dialog.
@@ -770,6 +778,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fit_objective = objective  # keep alive for the callback
 
         self.fit_button.setText("Abort")
+        self._set_fit_running_ui_state(True)
         names = ", ".join(do.name for do in fitted)
         self.msg(f"Fitting {names}...")
         self.fit_controller.start(
@@ -780,6 +789,26 @@ class MainWindow(QtWidgets.QMainWindow):
             seed=1,
         )
 
+    def _set_fit_running_ui_state(self, running):
+        """While a fit runs on FitController's background thread, the
+        optimizer is continuously reading *and writing* the fitted
+        model's Parameter objects (Objective.setp() every iteration,
+        chisqr() every progress callback) -- editing, renaming,
+        linking, or restructuring the same models from the GUI thread
+        at the same time is a real, unsynchronized data race between
+        two threads touching the same Python/refnx objects, not just a
+        cosmetic inconsistency, and has been implicated in crashes
+        after repeated fit runs. Disable everything that could touch a
+        DataObject's model while a fit is in flight; only Fit/Abort
+        itself, and read-only things like switching plot tabs, stay
+        live. Re-enabled once on_fit_finished confirms the background
+        thread has actually stopped -- not any earlier."""
+        self.tree_view.setEnabled(not running)
+        self.table_view.setEnabled(not running)
+        self.auto_limits_button.setEnabled(not running)
+        for menu in self._model_mutating_menus:
+            menu.setEnabled(not running)
+
     def on_fit_progress(self, chi2, iterations):
         self.statusBar().showMessage(
             f"chi2={chi2:.6g}   iteration={iterations}"
@@ -789,6 +818,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fit_button.setText(
             "Fit checked datasets (differential evolution)"
         )
+        self._set_fit_running_ui_state(False)
         if exc is not None:
             self.msg(f"Fit failed: {exc!r}")
         else:

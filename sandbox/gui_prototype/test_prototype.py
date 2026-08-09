@@ -572,6 +572,59 @@ def test_fit_proceeds_when_bounds_are_finite(qtbot):
         assert win.fit_button.text() == "Abort"
 
 
+def test_editing_controls_disabled_while_fit_is_running(qtbot):
+    # the background fit thread continuously reads *and writes* the
+    # fitted model's Parameter objects (Objective.setp() every
+    # iteration) -- editing/renaming/linking/restructuring the same
+    # models from the GUI thread at the same time is a real,
+    # unsynchronized data race, so everything that could touch a
+    # DataObject's model is disabled for the duration
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    assert win.tree_view.isEnabled()
+    assert win.table_view.isEnabled()
+    assert all(m.isEnabled() for m in win._model_mutating_menus)
+
+    with qtbot.waitSignal(win.fit_controller.started, timeout=5000):
+        win.on_fit_clicked()
+
+    assert not win.tree_view.isEnabled()
+    assert not win.table_view.isEnabled()
+    assert not win.auto_limits_button.isEnabled()
+    assert not any(m.isEnabled() for m in win._model_mutating_menus)
+
+    with qtbot.waitSignal(win.fit_controller.finished, timeout=30000):
+        pass
+
+    assert win.tree_view.isEnabled()
+    assert win.table_view.isEnabled()
+    assert win.auto_limits_button.isEnabled()
+    assert all(m.isEnabled() for m in win._model_mutating_menus)
+
+
+def test_repeated_fits_do_not_crash_or_leave_stale_state(qtbot):
+    # regression test for a reported segfault after clicking Fit
+    # several times in a row -- runs several full start-to-finish fit
+    # cycles back to back and checks the UI settles correctly every
+    # time, exercising exactly the repeated QThread create/teardown
+    # cycle that triggered it
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    for i in range(4):
+        assert not win.fit_controller.running
+        with qtbot.waitSignal(win.fit_controller.finished, timeout=30000):
+            win.on_fit_clicked()
+            assert win.fit_button.text() == "Abort"
+        assert win.fit_button.text().startswith("Fit")
+        assert not win.fit_controller.running
+        assert win.tree_view.isEnabled()
+        assert win.table_view.isEnabled()
+
+
 def test_load_data_adds_rather_than_replaces(monkeypatch, qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
