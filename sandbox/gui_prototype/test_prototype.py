@@ -41,6 +41,28 @@ def test_multiple_datasets_all_displayed(qtbot):
     assert win.parameter_model.leaf_count() == 34
 
 
+def test_parameter_tree_columns_sized_to_content_on_startup(
+    qtbot, monkeypatch
+):
+    # a QTreeView's default column widths are small, fixed pixel values
+    # unrelated to content -- left alone, Name/Value/sigma/Lower/Upper
+    # all show up too narrow to read on startup, forcing a manual drag
+    # to widen them every time
+    resized_columns = []
+    monkeypatch.setattr(
+        QtWidgets.QTreeView,
+        "resizeColumnToContents",
+        lambda self, col: resized_columns.append(col),
+    )
+
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    last_col = win.parameter_model.columnCount() - 1  # stretches, not resized
+    assert resized_columns == list(range(last_col))
+
+
 def test_boundary_slab_parameters_hidden(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)

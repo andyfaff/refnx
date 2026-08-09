@@ -263,7 +263,14 @@ list.
   tree (bottom-left, grouped by Component and collapsible per group,
   always shows everything for every checked dataset — select rows across
   groups and datasets and use **Link Selected**/**Unlink Selected**/**Link
-  Equivalent Parameters...** to constrain them), reflectivity and SLD
+  Equivalent Parameters...** to constrain them). `_refresh_parameter_tree_view()`
+  — called everywhere the parameter tree's shape or content changes,
+  including at startup — expands everything and sizes every column but
+  the last to fit its content: a `QTreeView`'s default column widths
+  are small, fixed pixel values with no relation to what's actually in
+  them, so left alone every column (Name, Value, `σ`, Lower, Upper)
+  shows up truncated on every launch, needing a manual drag to widen
+  each one every single time. Reflectivity and SLD
   plots overlaying every dataset (right), a Fit button that builds a
   `GlobalObjective` from whichever datasets are checked and runs DE on a
   background thread — first checking that every varying parameter in
@@ -390,6 +397,9 @@ actually work, not just compile:
 
 - both startup datasets are loaded and *all* of their parameters are in
   the tree at once, not just one dataset's;
+- every parameter tree column but the last (which stretches) gets sized
+  to fit its content on startup, rather than sitting at Qt's default
+  fixed width;
 - parameters are grouped by Component (a "Model" group for
   scale/bkg/dq/q_offset, one group per top-level Component in Structure
   order) with only each Component's own rows as its children -- and a

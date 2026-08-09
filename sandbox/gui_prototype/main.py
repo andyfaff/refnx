@@ -160,7 +160,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         # everything visible at once by default, same as the old flat
         # table -- collapsing a group is opt-in, not the starting state
-        self.table_view.expandAll()
+        self._refresh_parameter_tree_view()
         self.parameter_model.dataChanged.connect(self.on_parameter_changed)
 
         # Link/Unlink Selected and Link Equivalent Parameters are
@@ -285,10 +285,24 @@ class MainWindow(QtWidgets.QMainWindow):
         those methods also end by resetting tree_model."""
         self.tree_model.set_datastore(self.datastore)
 
+    def _refresh_parameter_tree_view(self):
+        """Expand everything and size each column to fit its content.
+        A QTreeView's default column widths are small, fixed pixel
+        values unrelated to what's actually in them -- left alone, the
+        Name/Value/σ/Lower/Upper columns all show up too narrow to
+        read (truncated to "t...", "2.1234...", etc.) on every startup
+        and after every structural change, forcing a manual drag to
+        widen them each time. Called everywhere the parameter tree's
+        shape or content changes, not just once at startup."""
+        self.table_view.expandAll()
+        last_col = self.parameter_model.columnCount() - 1
+        for col in range(last_col):  # last column already stretches
+            self.table_view.resizeColumnToContents(col)
+
     def on_structure_changed(self):
         self.tree_view.expandAll()
         self.parameter_model.set_datastore(self.datastore)
-        self.table_view.expandAll()
+        self._refresh_parameter_tree_view()
         self.plot_controller.update(self.datastore)
 
     def _selected_data_object(self):
@@ -608,7 +622,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Cheap enough at this scale to just rebuild unconditionally
         # rather than branching on which one `roles` says it was.
         self.parameter_model.set_datastore(self.datastore)
-        self.table_view.expandAll()
+        self._refresh_parameter_tree_view()
 
     def _selected_table_rows(self):
         """One QModelIndex (column 0) per selected row, deduplicated --
@@ -726,7 +740,7 @@ class MainWindow(QtWidgets.QMainWindow):
             p.constraint = master
 
         self.parameter_model.set_datastore(self.datastore)
-        self.table_view.expandAll()
+        self._refresh_parameter_tree_view()
         self.plot_controller.update(self.datastore)
         self.msg(
             f"Linked {len(to_link)} equivalent parameter(s) across "
@@ -828,7 +842,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # changed rows are scattered across the tree rather than
             # one contiguous range
             self.parameter_model.set_datastore(self.datastore)
-            self.table_view.expandAll()
+            self._refresh_parameter_tree_view()
         self.plot_controller.update(self.datastore)
 
 
