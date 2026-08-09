@@ -192,6 +192,26 @@ list.
   callers. Works identically whether it's handed a plain `Objective`
   (one dataset) or a `GlobalObjective` (several) — `CurveFitter` doesn't
   care, so the controller doesn't need to either.
+
+  `_FitWorker` has no C++ parent — `moveToThread()` requires that, Qt
+  refuses to move a parented object to another thread — so PySide's
+  shiboken bindings govern its C++ lifetime by Python reference count
+  rather than a parent-child tree. `worker.finished` is connected to
+  `worker.deleteLater()`, which only *schedules* a deferred deletion;
+  the fix for a real, reported segfault after repeated fits was
+  realising `FitController` was clearing its own `self._worker`
+  reference (in `_on_thread_finished`) before that scheduled deletion
+  had actually run — so Python's GC deleted the C++ object directly
+  instead, out from under the still-pending deferred delete
+  ("`QObject: shared QObject was deleted directly`", then a segfault
+  the next time anything touched the dangling pointer). `self._worker`
+  is now only cleared from `_on_worker_destroyed`, connected to the
+  worker's own `destroyed` signal — which Qt emits synchronously as
+  part of the object's actual destruction — so the Python reference
+  never gets dropped ahead of Qt's own teardown. The `QThread` itself
+  doesn't have this problem: it's parented to the controller (`self`),
+  so its C++ lifetime is anchored by Qt's ownership tree regardless of
+  what Python references still point to it.
 - **`plotting.py`** — `PlotController`, redraws reflectivity/SLD from a
   whole `DataStore`, overlaying every dataset with a shared legend.
   Doesn't know about tree models, unlike
@@ -413,9 +433,11 @@ actually work, not just compile:
   model-mutating menus are all disabled the moment a fit starts and
   re-enabled only once it's genuinely finished;
 - running several full fit cycles back to back (start, wait for
-  `finished`, repeat) settles into the same clean state every time —
-  the regression test for a reported segfault after clicking Fit
-  several times in a row;
+  `finished`, force a GC pass, repeat) settles into the same clean
+  state every time — the regression test for a reported segfault after
+  clicking Fit several times in a row; the GC pass matters, since the
+  actual bug was a premature Python-side reference drop racing Qt's
+  own `deleteLater()`-scheduled deletion of the fit worker;
 - Load Data *adds* a dataset rather than replacing the store, and
   survives a dataset with a different number of points (the actual bug
   this exposed: `PlotController` used to cache line artists and update

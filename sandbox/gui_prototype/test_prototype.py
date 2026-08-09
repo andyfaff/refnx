@@ -2,6 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import gc
 import sys
 from importlib import resources
 
@@ -607,9 +608,15 @@ def test_editing_controls_disabled_while_fit_is_running(qtbot):
 def test_repeated_fits_do_not_crash_or_leave_stale_state(qtbot):
     # regression test for a reported segfault after clicking Fit
     # several times in a row -- runs several full start-to-finish fit
-    # cycles back to back and checks the UI settles correctly every
-    # time, exercising exactly the repeated QThread create/teardown
-    # cycle that triggered it
+    # cycles back to back, forcing a GC pass after each, and checks the
+    # UI settles correctly every time. The GC pass matters: the actual
+    # bug was that _FitWorker (parentless, as moveToThread() requires)
+    # had its Python reference cleared before Qt's own deleteLater()-
+    # scheduled deletion had run, so Python's GC deleted the C++ object
+    # directly instead -- "QObject: shared QObject was deleted
+    # directly" -- out from under the still-pending deferred delete.
+    # Forcing gc.collect() between cycles reproduces the timing that
+    # triggered it.
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
     qtbot.add_widget(win)
@@ -619,6 +626,7 @@ def test_repeated_fits_do_not_crash_or_leave_stale_state(qtbot):
         with qtbot.waitSignal(win.fit_controller.finished, timeout=30000):
             win.on_fit_clicked()
             assert win.fit_button.text() == "Abort"
+        gc.collect()
         assert win.fit_button.text().startswith("Fit")
         assert not win.fit_controller.running
         assert win.tree_view.isEnabled()

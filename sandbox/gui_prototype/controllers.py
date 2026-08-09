@@ -99,6 +99,22 @@ class FitController(QtCore.QObject):
         self._worker.finished.connect(_capture)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
+        # _FitWorker has no C++ parent -- moveToThread() requires that,
+        # Qt refuses to move a parented object to another thread -- so
+        # PySide/shiboken governs its C++ lifetime by Python reference
+        # count instead of a parent-child tree. deleteLater() above
+        # only *schedules* a deferred deletion, processed whenever the
+        # worker thread's event loop next gets to it; if this
+        # controller's own Python reference (self._worker) gets
+        # cleared before that queued deletion actually runs, Python's
+        # GC deletes the C++ object directly instead, out from under
+        # the still-pending deferred delete -- "QObject: shared QObject
+        # was deleted directly", then a segfault whenever anything
+        # later touches the now-dangling pointer (a real, reproducible
+        # crash after repeated fits, not a hypothetical one). So the
+        # reference is only dropped once Qt itself confirms the object
+        # is actually gone, via `destroyed`, never eagerly.
+        self._worker.destroyed.connect(self._on_worker_destroyed)
         # Report "done" only once the QThread has genuinely finished,
         # not as soon as the worker's callable returns: thread.quit()
         # (connected above) still has to be delivered to, and processed
@@ -107,7 +123,9 @@ class FitController(QtCore.QObject):
         # QThread that's still tearing down when the next fit starts (or
         # the interpreter exits) -- this exact bug caused a
         # sequential-fit deadlock in the production app's equivalent
-        # code before an identical fix.
+        # code before an identical fix. The QThread itself has a C++
+        # parent (`self`, see above), so clearing self._thread here
+        # doesn't have the same premature-deletion risk as the worker.
         self._thread.finished.connect(self._on_thread_finished)
         self._thread.finished.connect(self._thread.deleteLater)
 
@@ -118,8 +136,10 @@ class FitController(QtCore.QObject):
         if self._worker is not None:
             self._worker.request_abort()
 
+    def _on_worker_destroyed(self):
+        self._worker = None
+
     def _on_thread_finished(self):
         exc = self._result.get("exception")
         self._thread = None
-        self._worker = None
         self.finished.emit(exc)
