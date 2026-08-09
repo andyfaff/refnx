@@ -55,7 +55,21 @@ list.
 - **`models.py`** — `DataStoreTreeModel` (pure navigation: one generic
   node class per row, `DataObject` at the top level with a checkbox
   controlling `in_fit`, `Component` rows nested underneath, recursing
-  into `Stack`s automatically) and `ParameterTableModel` (a second tree:
+  into `Stack`s automatically). A second column shows each `DataObject`
+  row's chi-squared (`Objective(data_object.model,
+  data_object.dataset).chisqr()`, formatted `.4g`) — blank for
+  `Component` rows, which don't have one of their own. Not cached:
+  `data()` computes it fresh on every call, so `refresh_chi2()` (which
+  just emits `dataChanged` for that column) is all a caller needs to
+  pick up the latest parameter values, without the far more expensive
+  full tree rebuild `set_datastore()` would do. `main.py`'s
+  `_update_plots_and_chi2()` calls it alongside every
+  `plot_controller.update()` — the two go stale at exactly the same
+  moments (any change to a model's parameters or structure) — and
+  `on_tree_model_changed` explicitly ignores `dataChanged` confined to
+  the chi2 column, since that fires on *every* parameter edit and would
+  otherwise trigger an unnecessary parameter-tree rebuild each time.
+  `ParameterTableModel` is a second tree:
   Dataset -> [a "Model" group for scale/bkg/dq/q_offset, one group per
   top-level Component, recursing into `Stack`s] -> individual `Parameter`/
   `ComponentProperty` rows, across *every* `DataObject` in the store).
@@ -407,6 +421,9 @@ actually work, not just compile:
 
 - both startup datasets are loaded and *all* of their parameters are in
   the tree at once, not just one dataset's;
+- the navigation tree's chi2 column matches `Objective(...).chisqr()`
+  for each dataset and is blank for Component rows; editing a value
+  updates it without triggering a full parameter-tree rebuild;
 - every parameter tree column but the last (which stretches) gets sized
   to fit its content on startup, rather than sitting at Qt's default
   fixed width;

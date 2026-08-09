@@ -41,18 +41,68 @@ def test_multiple_datasets_all_displayed(qtbot):
     assert win.parameter_model.leaf_count() == 34
 
 
+def test_navigation_tree_shows_chi2_per_dataset(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    chi2_col = win.tree_model.COLUMNS.index("chi2")
+    for row, name in enumerate(datastore.names):
+        idx = win.tree_model.index(row, chi2_col)
+        assert win.tree_model.data(idx) == f"{_chisqr(datastore[name]):.4g}"
+
+    # a Component row (nested under a dataset) has no chi2 of its own
+    do_index = win.tree_model.index(0, 0)
+    component_index = win.tree_model.index(0, chi2_col, do_index)
+    assert win.tree_model.data(component_index) is None
+
+
+def test_editing_a_value_refreshes_chi2_without_rebuilding_parameter_tree(
+    qtbot, monkeypatch
+):
+    # chi2 changing is just data() being re-queried for one column, not
+    # a reason to tear down and rebuild the (much more expensive)
+    # parameter tree -- that only needs to happen for a checkbox toggle
+    # or a rename, see on_tree_model_changed
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    rebuild_calls = []
+    monkeypatch.setattr(
+        win.parameter_model,
+        "set_datastore",
+        lambda ds: rebuild_calls.append(ds),
+    )
+
+    chi2_col = win.tree_model.COLUMNS.index("chi2")
+    chi2_idx = win.tree_model.index(0, chi2_col)
+    before = win.tree_model.data(chi2_idx)
+
+    thick = datastore["e361r"].model.structure[-2].thick
+    value_col = win.parameter_model.COLUMNS.index("value")
+    idx = win.parameter_model.index_for(thick, value_col)
+    win.parameter_model.setData(idx, str(thick.value + 50))
+
+    after = win.tree_model.data(chi2_idx)
+    assert after != before
+    assert rebuild_calls == []
+
+
 def test_parameter_tree_columns_sized_to_content_on_startup(
     qtbot, monkeypatch
 ):
     # a QTreeView's default column widths are small, fixed pixel values
     # unrelated to content -- left alone, Name/Value/sigma/Lower/Upper
     # all show up too narrow to read on startup, forcing a manual drag
-    # to widen them every time
-    resized_columns = []
+    # to widen them every time. Both the parameter tree and the
+    # navigation tree are QTreeViews, so the patch is class-wide --
+    # filter to just the one under test.
+    resized = []
     monkeypatch.setattr(
         QtWidgets.QTreeView,
         "resizeColumnToContents",
-        lambda self, col: resized_columns.append(col),
+        lambda self, col: resized.append((self, col)),
     )
 
     datastore = build_demo_datastore()
@@ -60,7 +110,26 @@ def test_parameter_tree_columns_sized_to_content_on_startup(
     qtbot.add_widget(win)
 
     last_col = win.parameter_model.columnCount() - 1  # stretches, not resized
-    assert resized_columns == list(range(last_col))
+    table_resized = [col for view, col in resized if view is win.table_view]
+    assert table_resized == list(range(last_col))
+
+
+def test_navigation_tree_dataset_column_sized_to_content_on_startup(
+    qtbot, monkeypatch
+):
+    resized = []
+    monkeypatch.setattr(
+        QtWidgets.QTreeView,
+        "resizeColumnToContents",
+        lambda self, col: resized.append((self, col)),
+    )
+
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    tree_resized = [col for view, col in resized if view is win.tree_view]
+    assert tree_resized == [0]  # chi2 (the last column) stretches instead
 
 
 def test_left_pane_starts_wider_than_the_plots(qtbot):

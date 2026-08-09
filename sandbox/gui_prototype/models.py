@@ -28,7 +28,7 @@ that for free, since it only ever looks at Parameter identity and
 from qtpy import QtCore
 from qtpy.QtCore import Qt
 
-from refnx.analysis import Parameter
+from refnx.analysis import Objective, Parameter
 from refnx.reflect import LipidLeaflet, Slab, Stack
 from refnx.reflect.spline import Spline
 
@@ -212,13 +212,34 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
         node = parent.internalPointer() if parent.isValid() else self._root
         return len(node.children) if node is not None else 0
 
+    COLUMNS = ("name", "chi2")
+    HEADERS = ("Dataset", "χ²")
+
     def columnCount(self, parent=QtCore.QModelIndex()):
-        return 1
+        return len(self.COLUMNS)
+
+    def headerData(
+        self, section, orientation, role=Qt.ItemDataRole.DisplayRole
+    ):
+        if (
+            orientation == Qt.Orientation.Horizontal
+            and role == Qt.ItemDataRole.DisplayRole
+        ):
+            return self.HEADERS[section]
+        return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         obj = index.internalPointer().obj
+        col = self.COLUMNS[index.column()]
+
+        if col == "chi2":
+            if role == Qt.ItemDataRole.DisplayRole and isinstance(
+                obj, DataObject
+            ):
+                return f"{Objective(obj.model, obj.dataset).chisqr():.4g}"
+            return None
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return _component_label(obj)
@@ -233,6 +254,21 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
             )
 
         return None
+
+    def refresh_chi2(self):
+        """Emits dataChanged for every DataObject row's chi-squared
+        column, so an already-visible tree picks up the latest
+        parameter values -- chi2 isn't cached anywhere, data() computes
+        it fresh every time this is called (after an edit, a fit, a
+        structural change, ...). Only needed for views that have
+        already rendered; a first paint always queries data() fresh."""
+        n = len(self._root.children)
+        if not n:
+            return
+        col = self.COLUMNS.index("chi2")
+        top_left = self.index(0, col)
+        bottom_right = self.index(n - 1, col)
+        self.dataChanged.emit(top_left, bottom_right)
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if not index.isValid():
