@@ -102,6 +102,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tree_model.modelReset.connect(self.on_structure_changed)
         self.parameter_model = ParameterTableModel()
         self.parameter_model.set_datastore(datastore)
+        # remembers whichever datasets were last picked in the Link
+        # Equivalent Parameters dialog, so repeated linking (a common
+        # workflow: link one parameter, then the next, against the same
+        # set of datasets) doesn't need re-picking them every time
+        self._last_link_equivalent_targets = []
 
         self.plot_controller = PlotController()
         self.fit_controller = FitController(self)
@@ -648,11 +653,13 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog = DatasetMultiSelectDialog(
             self.datastore.names,
             title="Select equivalent datasets to link",
+            preselected=self._last_link_equivalent_targets,
             parent=self,
         )
         if not dialog.exec():
             return
         target_names = dialog.selected_names()
+        self._last_link_equivalent_targets = target_names
         if not target_names:
             self.msg(
                 "Select at least one dataset to link equivalent "

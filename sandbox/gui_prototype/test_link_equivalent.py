@@ -90,6 +90,35 @@ def test_link_equivalent_links_across_selected_datasets(qtbot, monkeypatch):
     assert thick2.constraint is thick1
 
 
+def test_link_equivalent_remembers_previously_selected_datasets(
+    qtbot, monkeypatch
+):
+    # a common workflow is linking several parameters, one at a time,
+    # against the same set of datasets each time -- re-picking that set
+    # from scratch every time the dialog opens would be tedious
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    seen_preselected = []
+
+    def fake_dialog(names, title=None, preselected=(), parent=None):
+        seen_preselected.append(list(preselected))
+        return _FakeMultiSelectDialog(["e365r"])
+
+    monkeypatch.setattr("main.DatasetMultiSelectDialog", fake_dialog)
+
+    thick1 = datastore["e361r"].model.structure[-2].thick
+    _select_parameter(win, thick1)
+    win.on_link_equivalent_triggered()
+    assert seen_preselected[0] == []  # nothing remembered on the first go
+
+    sld1 = datastore["e361r"].model.structure[-2].sld.real
+    _select_parameter(win, sld1)
+    win.on_link_equivalent_triggered()
+    assert seen_preselected[1] == ["e365r"]  # remembered from last time
+
+
 def test_link_equivalent_clears_a_pre_existing_master_constraint(
     qtbot, monkeypatch
 ):

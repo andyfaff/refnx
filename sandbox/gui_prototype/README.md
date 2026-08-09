@@ -222,8 +222,12 @@ list.
   *Link Equivalent Parameters...* mirrors the production app's action of
   the same name: select one or more parameters, pick which other loaded
   datasets to link across in a checklist dialog
-  (`DatasetMultiSelectDialog`), and it locates the parameter at the same
-  *structural position* in each of them and links everything together —
+  (`DatasetMultiSelectDialog`, which remembers and pre-selects whichever
+  datasets were picked last time — linking several parameters in a row
+  against the same set of datasets is the common case, and re-picking
+  that set from scratch every time would be tedious), and it locates
+  the parameter at the same *structural position* in each of them and
+  links everything together —
   assuming those datasets share the same model shape (same number of
   Components, same total parameter count; `models.same_model_shape()`
   checks this up front and refuses with one clear message rather than
@@ -404,6 +408,9 @@ actually work, not just compile:
   selected parameter to its equivalent in the target;
 - a pre-existing constraint on the about-to-become-master parameter is
   cleared first, avoiding constraint recursion;
+- the dataset picker opens with nothing pre-selected the first time,
+  then with whichever datasets were picked last time pre-selected on
+  every subsequent open;
 - mismatched model shapes refuse with a message and link nothing;
 - no selection, or only one dataset loaded, refuses before even opening
   the dataset picker;

@@ -182,9 +182,17 @@ class DatasetMultiSelectDialog(QtWidgets.QDialog):
     """Pick any number of datasets by name -- used by "Link Equivalent
     Parameters" to choose which other datasets to link across, mirroring
     the production app's DataObjectSelectorDialog (a checkable list),
-    just without that dialog's dedicated widget class."""
+    just without that dialog's dedicated widget class.
 
-    def __init__(self, names, title="Select datasets", parent=None):
+    `preselected` pre-selects the given names on open -- callers use
+    this to remember whichever datasets were picked last time, so
+    repeated linking (a common workflow: link one parameter, then the
+    next, against the same set of datasets each time) doesn't need
+    re-picking them every time the dialog appears."""
+
+    def __init__(
+        self, names, title="Select datasets", preselected=(), parent=None
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
 
@@ -193,6 +201,11 @@ class DatasetMultiSelectDialog(QtWidgets.QDialog):
             QtWidgets.QAbstractItemView.SelectionMode.MultiSelection
         )
         self.list_widget.addItems(names)
+        preselected = set(preselected)
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.text() in preselected:
+                item.setSelected(True)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok
