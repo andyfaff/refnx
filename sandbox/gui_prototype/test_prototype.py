@@ -256,6 +256,57 @@ def test_plots_keep_tracking_window_resizes_after_undocking(qtbot):
     assert central.width() < 950
 
 
+def test_plots_keep_tracking_resizes_with_only_one_pane_undocked(qtbot):
+    # distinct from the "both undocked" case above: with the other
+    # pane still docked, the central widget's left edge sits flush
+    # against it (not against the window edge), and needs to keep
+    # tracking window resizes relative to *that* moving target
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+    win.resize(1200, 800)
+    win.show()
+    qtbot.waitExposed(win)
+
+    win.structure_dock.setFloating(True)
+    qtbot.wait(50)
+
+    central = win.centralWidget()
+    left_edge = central.x()
+    assert left_edge > 0  # flush against the still-docked Parameters pane
+
+    win.resize(1600, 900)
+    qtbot.wait(50)
+    assert central.x() == left_edge  # position unaffected
+    assert central.width() == win.width() - left_edge
+
+    win.resize(900, 600)
+    qtbot.wait(50)
+    assert central.width() == win.width() - left_edge
+
+
+def test_plots_track_resizes_again_after_redocking(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+    win.resize(1200, 800)
+    win.show()
+    qtbot.waitExposed(win)
+
+    win.structure_dock.setFloating(True)
+    win.parameters_dock.setFloating(True)
+    qtbot.wait(50)
+    win.structure_dock.setFloating(False)
+    win.parameters_dock.setFloating(False)
+    qtbot.wait(50)
+
+    central = win.centralWidget()
+    win.resize(1500, 850)
+    qtbot.wait(50)
+    assert central.width() < win.width()  # docks are back, sharing space
+    assert central.width() > 0
+
+
 def test_undocking_triggers_a_central_widget_relayout(qtbot, monkeypatch):
     # topLevelChanged is what's supposed to prompt QMainWindowLayout to
     # reconsider how much space the central widget owns -- this checks

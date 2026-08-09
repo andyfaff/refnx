@@ -338,25 +338,27 @@ list.
   isn't a strong enough claim on space for the canvas to reliably fill
   a `QTabWidget` page, especially once undocking a `QDockWidget` frees
   up room elsewhere in the `QMainWindow` that the canvas needs to grow
-  into. That alone wasn't quite enough, either: once both left-hand
-  docks are floating, `QMainWindowLayout` was observed to stop tracking
-  *further* window resizes for the central widget altogether — not
-  just miss the first one right after undocking, but stay stuck from
-  then on, no matter how the window was subsequently resized.
-  `resizeEvent()` is overridden to force a real layout pass
-  (`self.layout().invalidate()` + `.activate()`) on *every* window
-  resize now, not relying on `QMainWindowLayout` to recompute
-  automatically — `updateGeometry()` alone only invalidates the cached
-  size *hint*, it doesn't force an immediate recomputation of who owns
-  how much space, which turned out not to be a strong enough nudge.
-  Both docks' `topLevelChanged` are also connected to
-  `_relayout_central_widget()`, doing the same thing queued for the
-  next event-loop tick (`topLevelChanged` fires partway through Qt's
-  own float transition, before `QMainWindowLayout` has necessarily
-  finished reshuffling itself, so forcing it immediately can still see
-  stale sizes) — belt-and-suspenders alongside the `resizeEvent`
-  override for the specific moment a dock's floating state changes.
-  Reflectivity and SLD plots overlaying every dataset (right, and
+  into. That alone wasn't quite enough, either: pinned down by hand to
+  a specific `QMainWindowLayout` behaviour — the moment *any* dock is
+  floating (one or both), it keeps the central widget's *position*
+  correct (still flush against whichever pane, if any, is still
+  actually docked) but stops recomputing its *size* on ordinary window
+  resizes entirely, staying stuck at whatever size it had until every
+  floating pane is redocked, at which point it starts tracking
+  correctly again. Neither `updateGeometry()` (only invalidates the
+  cached size *hint*) nor `self.layout().invalidate()` + `.activate()`
+  (forces a real layout pass, but apparently not through whatever
+  internal state causes this) reach it. So `_do_relayout_central_widget()`
+  takes over sizing the central widget explicitly whenever
+  `structure_dock.isFloating() or parameters_dock.isFloating()` — using
+  its own still-correct top-left corner and the window's own
+  bottom-right, minus `statusBar().height()` — called from
+  `resizeEvent()` on every window resize (not relying on
+  `QMainWindowLayout` to recompute on its own) and from both docks'
+  `topLevelChanged` (queued to the next event-loop tick, since that
+  signal fires before Qt's own float transition has necessarily
+  finished reshuffling things, so acting on it immediately can still
+  see stale sizes). Reflectivity and SLD plots overlaying every dataset (right, and
   now genuinely filling whatever room they're given), a Fit button — in
   the Parameters dock now, not with the plots, since it's a parameter-
   tree action (which datasets get fitted is read off the Structure
@@ -508,12 +510,13 @@ actually work, not just compile:
   and floating one (undocking it) actually works and leaves the other
   docked, not just a feature flag being set;
 - the plot canvases carry an `Expanding` size policy (not `Preferred`,
-  matplotlib's own default), the central widget actually grows into
-  the space a floated dock frees up, and — the regression case — it
-  keeps tracking *further* window resizes afterward too, not just the
-  first one right after undocking; both `topLevelChanged` on either
-  dock, and every ordinary window resize on its own, are confirmed to
-  force a real layout pass;
+  matplotlib's own default), and the central widget keeps tracking
+  window resizes correctly in every combination: both panes docked,
+  only one undocked (checked against the still-docked pane's width,
+  not just against 0), both undocked, and back to both redocked again
+  — the actual regression, which was specifically that it *stopped*
+  tracking further resizes once any dock was floating, not just that
+  it missed the first one;
 - the Fit button lives in the Parameters dock, not the central widget
   with the plots;
 - the Reflectivity and SLD tabs each carry their own matplotlib

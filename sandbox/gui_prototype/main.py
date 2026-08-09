@@ -425,7 +425,28 @@ class MainWindow(QtWidgets.QMainWindow):
             # immediate recomputation of who owns how much space.
             layout.invalidate()
             layout.activate()
-        self.centralWidget().updateGeometry()
+        central = self.centralWidget()
+        central.updateGeometry()
+
+        # Confirmed by hand: QMainWindowLayout keeps the central
+        # widget's *position* correct even while a dock is floating
+        # (it still starts flush against whichever dock, if any, is
+        # still actually docked), but stops recomputing its *size* on
+        # ordinary window resizes the moment any dock is floating --
+        # invalidate()/activate() above don't reach whatever internal
+        # state causes that, only redocking every floating pane does.
+        # So: while that state holds, take over sizing it explicitly,
+        # using its own (still-correct) top-left corner and the window's
+        # own bottom-right, minus the status bar QMainWindow itself owns.
+        if (
+            self.structure_dock.isFloating()
+            or self.parameters_dock.isFloating()
+        ):
+            available_width = self.width() - central.x()
+            available_height = (
+                self.height() - central.y() - self.statusBar().height()
+            )
+            central.resize(max(0, available_width), max(0, available_height))
 
     def on_structure_changed(self):
         self._refresh_navigation_tree_view()
