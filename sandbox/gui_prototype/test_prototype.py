@@ -123,6 +123,98 @@ def test_nested_stack_slab_not_treated_as_boundary(qtbot):
     assert inner_slab.rough in shown
 
 
+def test_lipid_leaflet_reverse_monolayer_exposed_and_editable(qtbot):
+    # LipidLeaflet.reverse_monolayer is a plain bool attribute, not a
+    # Parameter -- .parameters.flattened() would never see it, so this
+    # is what ComponentProperty exists for.
+    from dialogs import default_component
+
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    leaflet = default_component("LipidLeaflet")
+    assert leaflet.reverse_monolayer is False
+    do.model.structure.insert(2, leaflet)  # a legal, middle position
+
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    rows = [
+        r
+        for r, (name, obj) in enumerate(win.parameter_model._rows)
+        if name == "e361r"
+        and getattr(obj, "attr_name", None) == "reverse_monolayer"
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+
+    value_col = win.parameter_model.COLUMNS.index("value")
+    idx = win.parameter_model.index(row, value_col)
+
+    assert (
+        win.parameter_model.data(idx, Qt.ItemDataRole.CheckStateRole)
+        == Qt.CheckState.Unchecked
+    )
+
+    ok = win.parameter_model.setData(
+        idx, Qt.CheckState.Checked.value, Qt.ItemDataRole.CheckStateRole
+    )
+    assert ok
+    assert leaflet.reverse_monolayer is True
+    assert (
+        win.parameter_model.data(idx, Qt.ItemDataRole.CheckStateRole)
+        == Qt.CheckState.Checked
+    )
+
+
+def test_spline_zgrad_exposed(qtbot):
+    from dialogs import default_component
+
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    spline = default_component("Spline")
+    do.model.structure.insert(2, spline)
+
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    rows = [
+        (name, obj)
+        for name, obj in win.parameter_model._rows
+        if getattr(obj, "attr_name", None) == "zgrad"
+    ]
+    assert len(rows) == 1
+
+
+def test_component_property_rows_ignored_by_link_and_auto_limits(qtbot):
+    # a property row mixed into a selection shouldn't crash link() or
+    # auto_limits() -- they only apply to real Parameters
+    from dialogs import default_component
+
+    datastore = build_demo_datastore()
+    do = datastore["e361r"]
+    leaflet = default_component("LipidLeaflet")
+    do.model.structure.insert(2, leaflet)
+
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    property_row = next(
+        r
+        for r, (name, obj) in enumerate(win.parameter_model._rows)
+        if name == "e361r"
+        and getattr(obj, "attr_name", None) == "reverse_monolayer"
+    )
+    parameter_row = next(
+        r
+        for r, (name, obj) in enumerate(win.parameter_model._rows)
+        if name == "e361r" and hasattr(obj, "vary")
+    )
+
+    # should not raise, and the property row is simply skipped
+    win.parameter_model.link([property_row, parameter_row])
+    win.parameter_model.auto_limits()
+
+
 def test_tree_selection_highlights_without_hiding_other_rows(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)

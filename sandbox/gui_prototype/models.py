@@ -21,7 +21,9 @@ that for free, since it only ever looks at Parameter identity and
 from qtpy import QtCore
 from qtpy.QtCore import Qt
 
-from refnx.reflect import Slab, Stack
+from refnx.analysis import Parameter
+from refnx.reflect import LipidLeaflet, Slab, Stack
+from refnx.reflect.spline import Spline
 
 from datastore import DataObject
 
@@ -56,6 +58,76 @@ def _boundary_slab_hidden_parameters(structure):
             hidden.add(last.sld.imag)
 
     return hidden
+
+
+# Attributes worth exposing in the GUI that aren't Parameters at all --
+# a plain bool/str/whatever set directly on the Component -- so they'd
+# otherwise be invisible no matter how the parameter table filters or
+# displays actual Parameters. Small and explicit rather than
+# auto-discovered: introspecting a Component for "any attribute that
+# looks interesting" would as easily surface internal implementation
+# details as something a user would want to edit. Mirrors the
+# production app's PropertyNode usage in LipidLeafletNode/SplineNode.
+COMPONENT_PROPERTIES = {
+    LipidLeaflet: ("reverse_monolayer",),
+    Spline: ("zgrad",),
+}
+
+
+class ComponentProperty:
+    """
+    A non-Parameter attribute of a Component -- e.g.
+    LipidLeaflet.reverse_monolayer -- wrapped so it can sit in
+    ParameterTableModel._rows alongside ordinary Parameters. Only bool
+    attributes are supported for editing right now (both of the
+    properties in COMPONENT_PROPERTIES are bools); anything else is
+    shown read-only as text rather than silently failing to edit.
+    """
+
+    __slots__ = ("component", "attr_name")
+
+    def __init__(self, component, attr_name):
+        self.component = component
+        self.attr_name = attr_name
+
+    @property
+    def value(self):
+        return getattr(self.component, self.attr_name)
+
+    @value.setter
+    def value(self, new_value):
+        setattr(self.component, self.attr_name, new_value)
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, ComponentProperty)
+            and self.component is other.component
+            and self.attr_name == other.attr_name
+        )
+
+    def __hash__(self):
+        return hash((id(self.component), self.attr_name))
+
+
+def _iter_components(component):
+    """Yields `component` and, if it's a Stack, everything nested
+    inside it -- recursively, since a Stack can itself contain another
+    Stack. Parameters already flatten through Stacks automatically (see
+    Component.parameters), but plain attributes like
+    LipidLeaflet.reverse_monolayer don't, so anything that wants to see
+    every Component regardless of nesting (i.e. _component_properties
+    below) needs to walk the tree itself."""
+    yield component
+    if isinstance(component, Stack):
+        for child in component:
+            yield from _iter_components(child)
+
+
+def _component_properties(component):
+    for cls, attrs in COMPONENT_PROPERTIES.items():
+        if isinstance(component, cls):
+            return [ComponentProperty(component, a) for a in attrs]
+    return []
 
 
 class StructureEditError(Exception):
@@ -389,8 +461,12 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._rows = []  # list of (data_object_name, Parameter)
-        self._row_of = {}  # Parameter -> row
+        self._rows = (
+            []
+        )  # list of (data_object_name, Parameter | ComponentProperty)
+        self._row_of = (
+            {}
+        )  # Parameter -> row (ComponentProperty isn't linkable)
 
     def set_datastore(self, datastore):
         self.beginResetModel()
@@ -399,15 +475,34 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
             for data_object in datastore:
                 if not data_object.in_fit:
                     continue
-                hidden = _boundary_slab_hidden_parameters(
-                    data_object.model.structure
-                )
-                for p in data_object.model.parameters.flattened():
-                    if p in hidden:
-                        continue
-                    self._rows.append((data_object.name, p))
-        self._row_of = {p: i for i, (_, p) in enumerate(self._rows)}
+                self._rows.extend(self._rows_for(data_object))
+        self._row_of = {
+            obj: i
+            for i, (_, obj) in enumerate(self._rows)
+            if isinstance(obj, Parameter)
+        }
         self.endResetModel()
+
+    def _rows_for(self, data_object):
+        name = data_object.name
+        model = data_object.model
+        rows = [
+            (name, p)
+            for p in (model.scale, model.bkg, model.dq, model.q_offset)
+        ]
+
+        hidden = _boundary_slab_hidden_parameters(model.structure)
+        for top_level in model.structure:
+            for p in top_level.parameters.flattened():
+                if p in hidden:
+                    continue
+                rows.append((name, p))
+            # attributes like LipidLeaflet.reverse_monolayer don't flatten
+            # through a Stack the way Parameters do, so walk it by hand
+            for component in _iter_components(top_level):
+                for prop in _component_properties(component):
+                    rows.append((name, prop))
+        return rows
 
     def rowCount(self, parent=QtCore.QModelIndex()):
         return 0 if parent.isValid() else len(self._rows)
@@ -431,12 +526,17 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
 
         col = self.COLUMNS[index.column()]
         base = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+        _, obj = self._rows[index.row()]
+
+        if isinstance(obj, ComponentProperty):
+            if col == "value" and isinstance(obj.value, bool):
+                return base | Qt.ItemFlag.ItemIsUserCheckable
+            return base
 
         if col == "vary":
             return base | Qt.ItemFlag.ItemIsUserCheckable
 
-        _, p = self._rows[index.row()]
-        if col in ("value", "lb", "ub") and p.constraint is None:
+        if col in ("value", "lb", "ub") and obj.constraint is None:
             return base | Qt.ItemFlag.ItemIsEditable
 
         return base
@@ -445,9 +545,13 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
         if not index.isValid():
             return None
 
-        dataset_name, p = self._rows[index.row()]
+        dataset_name, obj = self._rows[index.row()]
         col = self.COLUMNS[index.column()]
 
+        if isinstance(obj, ComponentProperty):
+            return self._property_data(dataset_name, obj, col, role)
+
+        p = obj
         if role == Qt.ItemDataRole.CheckStateRole and col == "vary":
             return Qt.CheckState.Checked if p.vary else Qt.CheckState.Unchecked
 
@@ -467,13 +571,45 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
 
         return None
 
+    def _property_data(self, dataset_name, prop, col, role):
+        if role == Qt.ItemDataRole.CheckStateRole:
+            if col == "value" and isinstance(prop.value, bool):
+                return (
+                    Qt.CheckState.Checked
+                    if prop.value
+                    else Qt.CheckState.Unchecked
+                )
+            return None
+
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
+            if col == "dataset":
+                return dataset_name
+            if col == "name":
+                return prop.attr_name
+            if col == "value" and not isinstance(prop.value, bool):
+                return str(prop.value)
+
+        return None
+
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if not index.isValid():
             return False
 
-        _, p = self._rows[index.row()]
+        _, obj = self._rows[index.row()]
         col = self.COLUMNS[index.column()]
 
+        if isinstance(obj, ComponentProperty):
+            if (
+                role == Qt.ItemDataRole.CheckStateRole
+                and col == "value"
+                and isinstance(obj.value, bool)
+            ):
+                obj.value = value == Qt.CheckState.Checked.value
+                self.dataChanged.emit(index, index, [role])
+                return True
+            return False
+
+        p = obj
         if role == Qt.ItemDataRole.CheckStateRole and col == "vary":
             p.vary = value == Qt.CheckState.Checked.value
             self.dataChanged.emit(index, index, [role])
@@ -509,14 +645,19 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
         return [
             row
             for row, (_, p) in enumerate(self._rows)
-            if p is not parameter and parameter in p.dependencies()
+            if isinstance(p, Parameter)
+            and p is not parameter
+            and parameter in p.dependencies()
         ]
 
     def parameter_at(self, row):
         return self._rows[row][1]
 
     def link(self, rows):
-        """Constrain every parameter in `rows` to the first one."""
+        """Constrain every (real Parameter) row in `rows` to the first
+        one. ComponentProperty rows in the selection are silently
+        skipped -- refnx constraints only apply to Parameters."""
+        rows = [r for r in rows if isinstance(self.parameter_at(r), Parameter)]
         if len(rows) < 2:
             return
         master = self.parameter_at(rows[0])
@@ -530,7 +671,10 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
     def unlink(self, rows):
         constraint_col = self.COLUMNS.index("constraint")
         for row in rows:
-            self.parameter_at(row).constraint = None
+            obj = self.parameter_at(row)
+            if not isinstance(obj, Parameter):
+                continue
+            obj.constraint = None
             idx_lo = self.index(row, self.COLUMNS.index("value"))
             idx_hi = self.index(row, constraint_col)
             self.dataChanged.emit(idx_lo, idx_hi)
@@ -549,7 +693,8 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
         every checked dataset's varying parameters -- not just a
         selection -- same scope as the production app's button, which
         acts on "currently fitting" datasets rather than whatever's
-        selected in the tree.
+        selected in the tree. ComponentProperty rows have no such thing
+        as "varying" and are skipped.
 
         Returns how many parameters were touched, so the caller can
         report something more useful than silence if it's zero.
@@ -558,7 +703,7 @@ class ParameterTableModel(QtCore.QAbstractTableModel):
         ub_col = self.COLUMNS.index("ub")
         touched = 0
         for row, (_, p) in enumerate(self._rows):
-            if not p.vary:
+            if not isinstance(p, Parameter) or not p.vary:
                 continue
             val = p.value
             if val < 0:

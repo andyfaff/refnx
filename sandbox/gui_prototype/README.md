@@ -74,6 +74,28 @@ currently-unchecked dataset just means checking it first.
   its thickness/iSLD/roughness instead and un-hides the old one's, the
   next time the table rebuilds.
 
+  Not every editable thing on a Component is a `Parameter` --
+  `LipidLeaflet.reverse_monolayer` and `Spline.zgrad` are plain bools
+  set directly on the object, so `.parameters.flattened()` (which is
+  all `ParameterTableModel` used to look at) can never see them, no
+  matter how the table's filtering changes. `ComponentProperty` wraps
+  one such attribute so it can sit in `self._rows` next to ordinary
+  `Parameter` rows, rendered as a checkbox in the Value column exactly
+  like the `Vary` column already does for `Parameter.vary`.
+  `COMPONENT_PROPERTIES` is a small, explicit registry (component type
+  -> attribute names) rather than auto-discovering "interesting-looking"
+  attributes by introspection, which would as easily surface internal
+  implementation details as something worth editing — mirrors the
+  production app's `PropertyNode` usage in `LipidLeafletNode`/
+  `SplineNode`. Everywhere a `Parameter`-only operation exists --
+  linking, `auto_limits()`, dependency propagation -- a
+  `ComponentProperty` row in the selection is silently skipped rather
+  than crashing, since none of those concepts apply to a plain
+  attribute. `_iter_components()` walks into `Stack`s by hand to find
+  properties nested inside one, since (unlike `Parameter`s, which
+  `Component.parameters` already flattens through a `Stack`
+  automatically) a plain attribute has no such built-in flattening.
+
   `DataStoreTreeModel` also owns structural editing of a Structure:
   `insert_component()`, `remove_component()`, `move_component()`, plus
   drag-and-drop (`mimeData()`/`dropMimeData()`) for reordering top-level
@@ -227,6 +249,10 @@ actually work, not just compile:
   `Stack` itself sits mid-structure, and dragging a different Slab into
   the first slot moves *which* parameters are hidden rather than being
   tied to a fixed Slab;
+- `LipidLeaflet.reverse_monolayer` and `Spline.zgrad` show up as
+  editable checkbox rows and actually flip the real attribute when
+  toggled through the model; a `ComponentProperty` row mixed into a
+  `link()`/`auto_limits()` selection is skipped rather than crashing;
 - Auto Limits sets `[0, 2*value]` (or reflected, for a negative value)
   on every *varying* parameter and leaves fixed ones alone, both called
   directly and through an actual button click;
