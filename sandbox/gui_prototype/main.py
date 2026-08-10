@@ -31,7 +31,7 @@ from qtpy.compat import getopenfilename, getopenfilenames, getsavefilename
 import refnx.analysis
 from refnx.dataset import ReflectDataset
 from refnx.reflect import SLD, ReflectModel, Stack
-from refnx.analysis import Objective, GlobalObjective, Parameter
+from refnx.analysis import Objective, GlobalObjective, Parameter, Transform
 
 from datastore import DataObject, DataStore
 from models import (
@@ -105,6 +105,14 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Motofit prototype -- architecture sketch")
         self.datastore = datastore
+        # Used both for the reflectivity plot (data and fit are shown
+        # transformed, axis scale flipped to match -- see
+        # PlotController._reset_axes) and for chi2 (both the tree's
+        # column and the Objective a fit runs against), so switching it
+        # from the Transform menu keeps everything that depends on the
+        # data in sync, exactly like the production app's
+        # settransformoption().
+        self.transform = Transform(None)
 
         self.tree_model = DataStoreTreeModel(datastore)
         self.tree_model.dataChanged.connect(self.on_tree_model_changed)
@@ -317,6 +325,29 @@ class MainWindow(QtWidgets.QMainWindow):
             self.on_remove_component_triggered
         )
 
+        transform_menu = self.menuBar().addMenu("&Transform")
+        transform_group = QtGui.QActionGroup(self)
+        transform_group.setExclusive(True)
+        # keyed by form string so on_transform_changed can keep the
+        # checked action in sync even when it's called other than by
+        # the user clicking one of these directly (QActionGroup only
+        # updates checked state for the action that was actually
+        # clicked, not for a same-effect call from elsewhere)
+        self._transform_actions = {}
+        for label, form in (
+            ("linY", "lin"),
+            ("logY", "logY"),
+            ("YX4", "YX4"),
+        ):
+            action = transform_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(form == "lin")
+            action.triggered.connect(
+                lambda checked, form=form: self.on_transform_changed(form)
+            )
+            transform_group.addAction(action)
+            self._transform_actions[form] = action
+
         parameters_menu = self.menuBar().addMenu("&Parameters")
 
         link_action = parameters_menu.addAction("Link Selected Parameters")
@@ -355,8 +386,16 @@ class MainWindow(QtWidgets.QMainWindow):
         (anything that changes a model's parameters or structure), so
         every call site that used to just update the plots now does
         both in one place instead of risking the two drifting apart."""
-        self.plot_controller.update(self.datastore)
-        self.tree_model.refresh_chi2()
+        self.plot_controller.update(self.datastore, transform=self.transform)
+        self.tree_model.set_transform(self.transform)
+
+    def on_transform_changed(self, form):
+        self.transform = Transform(form)
+        action = self._transform_actions.get(form)
+        if action is not None:
+            action.setChecked(True)
+        self._update_plots_and_chi2()
+        self.msg(f"Transform set to {form!r}")
 
     def _refresh(self):
         """Refresh every view from the current state of self.datastore.
@@ -394,6 +433,13 @@ class MainWindow(QtWidgets.QMainWindow):
         after it instead."""
         self.tree_view.expandAll()
         self.tree_view.resizeColumnToContents(0)
+
+    def closeEvent(self, event):
+        # plot_controller.close() disconnects it from the application's
+        # paletteChanged signal -- see PlotController.__init__ for why
+        # that connection must not outlive this window's canvases.
+        self.plot_controller.close()
+        super().closeEvent(event)
 
     def resizeEvent(self, event):
         # belt-and-suspenders alongside _relayout_central_widget below:
@@ -968,7 +1014,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         objectives = [
-            Objective(do.model, do.dataset, use_weights=True) for do in fitted
+            Objective(
+                do.model,
+                do.dataset,
+                use_weights=True,
+                transform=self.transform,
+            )
+            for do in fitted
         ]
         objective = (
             objectives[0]

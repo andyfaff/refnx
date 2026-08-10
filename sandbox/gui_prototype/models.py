@@ -28,7 +28,7 @@ that for free, since it only ever looks at Parameter identity and
 from qtpy import QtCore
 from qtpy.QtCore import Qt
 
-from refnx.analysis import Objective, Parameter
+from refnx.analysis import Objective, Parameter, Transform
 from refnx.reflect import LipidLeaflet, Slab, Stack
 from refnx.reflect.spline import Spline
 
@@ -170,7 +170,15 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
     def __init__(self, datastore=None, parent=None):
         super().__init__(parent)
         self._root = _TreeNode(None, None, 0)
+        self.transform = Transform(None)
         self.set_datastore(datastore)
+
+    def set_transform(self, transform):
+        """Sets the Transform used for the chi2 column, and refreshes
+        it immediately -- chi2 isn't cached, so nothing else needs to
+        change for the new value to show up."""
+        self.transform = transform
+        self.refresh_chi2()
 
     def set_datastore(self, datastore):
         self.beginResetModel()
@@ -238,7 +246,10 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
             if role == Qt.ItemDataRole.DisplayRole and isinstance(
                 obj, DataObject
             ):
-                return f"{Objective(obj.model, obj.dataset).chisqr():.4g}"
+                objective = Objective(
+                    obj.model, obj.dataset, transform=self.transform
+                )
+                return f"{objective.chisqr():.4g}"
             return None
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
