@@ -30,6 +30,7 @@ from qtpy import QtWidgets, QtGui, QtCore
 from qtpy.compat import getopenfilename, getopenfilenames, getsavefilename
 
 import refnx.analysis
+import refnx.reflect._app
 from refnx.dataset import ReflectDataset
 from refnx.reflect import SLD, ReflectModel, Stack
 from refnx.analysis import Objective, GlobalObjective, Parameter, Transform
@@ -58,6 +59,17 @@ import persistence
 def _default_model():
     structure = SLD(0)(0, 0) | SLD(4.0)(0, 3)
     return ReflectModel(structure)
+
+
+def _app_icon():
+    """The same refnx/Motofit logo the production app sets via its
+    compiled Qt resources (app.setWindowIcon(QtGui.QIcon(
+    ':icons/scattering.png')) in refnx.reflect._app.__init__.gui) --
+    loaded directly from the icon file instead, so this prototype
+    doesn't need that resource compilation step (resources_rc.py) as a
+    dependency just to show an icon."""
+    pth = resources.files(refnx.reflect._app) / "icons" / "scattering.png"
+    return QtGui.QIcon(str(pth))
 
 
 def _plot_tab(canvas, toolbar):
@@ -1183,6 +1195,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    app.setWindowIcon(_app_icon())
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
     win.resize(1200, 650)
