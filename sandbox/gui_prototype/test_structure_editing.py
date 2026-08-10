@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from qtpy import QtWidgets
 from qtpy.QtCore import Qt
 
 from refnx.reflect import SLD, Stack
@@ -77,9 +78,69 @@ def test_add_component_rejects_invalid_boundary(qtbot, monkeypatch):
         "main.AddComponentDialog",
         lambda *a, **k: _FakeAddDialog("e361r", "Spline", 0),
     )
+    # Spline's own knot-count prompt runs before the position is
+    # validated (same order as LipidLeaflet's picker), so it still
+    # needs mocking even though this rejection has nothing to do with
+    # knots -- otherwise a real, unmocked QInputDialog.getInt would
+    # block waiting for a click that can't come, headlessly.
+    monkeypatch.setattr(
+        QtWidgets.QInputDialog, "getInt", lambda *a, **k: (2, True)
+    )
     win.on_add_component_triggered()
 
     assert len(do.model.structure) == n_before  # rejected, untouched
+
+
+def test_add_spline_asks_how_many_knots(qtbot, monkeypatch):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    n_before = len(do.model.structure)
+
+    monkeypatch.setattr(
+        "main.AddComponentDialog",
+        lambda *a, **k: _FakeAddDialog("e361r", "Spline", 2),
+    )
+    prompts = []
+
+    def fake_get_int(parent, title, label, value, minimum, maximum):
+        prompts.append((value, minimum, maximum))
+        return 5, True
+
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getInt", fake_get_int)
+    win.on_add_component_triggered()
+
+    assert len(do.model.structure) == n_before + 1
+    spline = do.model.structure[2]
+    assert isinstance(spline, Spline)
+    assert len(spline.vs) == 5
+    assert len(spline.dz) == 5
+    # asked with a sensible default/range, not just some arbitrary call
+    assert prompts == [(2, 1, 20)]
+
+
+def test_add_spline_cancelled_knot_prompt_aborts_the_whole_add(
+    qtbot, monkeypatch
+):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    do = datastore["e361r"]
+    n_before = len(do.model.structure)
+
+    monkeypatch.setattr(
+        "main.AddComponentDialog",
+        lambda *a, **k: _FakeAddDialog("e361r", "Spline", 2),
+    )
+    monkeypatch.setattr(
+        QtWidgets.QInputDialog, "getInt", lambda *a, **k: (5, False)
+    )
+    win.on_add_component_triggered()
+
+    assert len(do.model.structure) == n_before  # nothing added
 
 
 def test_add_component_rejects_new_last_position_too(qtbot, monkeypatch):

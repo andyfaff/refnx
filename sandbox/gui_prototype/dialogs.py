@@ -3,17 +3,22 @@ AddComponentDialog: picks a dataset, a container (the top level of its
 Structure, or a Stack found somewhere within it), a Component type, and
 a position within that container.
 
-Mostly doesn't have per-type parameter entry fields (`Spline` needs
-knot arrays, etc. -- replicating the production app's dedicated
-`SplineDialog` is a separate, larger piece of work). Instead this hands
-back a Component built with reasonable placeholder values from
+Mostly doesn't have per-type parameter entry fields -- this hands back
+a Component built with reasonable placeholder values from
 `default_component()`, which then shows up in ParameterTableModel like
 any other Component's parameters -- because that model is generic (it
 just flattens whatever `.parameters` a Component exposes), editing the
-placeholder values afterward needs no bespoke UI at all. `LipidLeaflet`
-is the one exception: `LipidLeafletDialog` below lets you pick a known
-lipid from refnx's own library rather than always landing with the
-same fixed placeholder.
+placeholder values afterward needs no bespoke UI at all. Two
+exceptions: `LipidLeaflet` (`LipidLeafletDialog` below lets you pick a
+known lipid from refnx's own library rather than always landing with
+the same fixed placeholder) and `Spline`, which at least asks how many
+knots up front (main.py's on_add_component_triggered, via a plain
+QInputDialog.getInt) since that's a structural choice -- how many
+vs/dz parameters the Component even has -- not something editable
+afterward through the parameter tree the way each knot's own value is.
+Individual knot placement/SLD still start at fixed placeholders;
+replicating the production app's dedicated `SplineDialog` for those
+too is a separate, larger piece of work.
 """
 
 import json
@@ -30,7 +35,7 @@ from refnx.reflect._app._lipid_leaflet import Lipid
 COMPONENT_KINDS = ("Slab", "LipidLeaflet", "Spline", "Stack")
 
 
-def default_component(kind):
+def default_component(kind, n_knots=2):
     if kind == "Slab":
         return SLD(3.47)(15, 3)
     if kind == "LipidLeaflet":
@@ -47,7 +52,17 @@ def default_component(kind):
             name="lipid",
         )
     if kind == "Spline":
-        return Spline(extent=30, vs=[3.0, 3.0], dz=[0.33, 0.33], name="spline")
+        # dz[i] is each knot's *fractional* spacing (Spline.__init__
+        # requires 0 < dz < 1); spacing them evenly across n_knots
+        # knots means n_knots + 1 equal intervals -- e.g. the
+        # long-standing 2-knot default (0.33, 0.33) is exactly this
+        # formula's n_knots=2 case.
+        return Spline(
+            extent=30,
+            vs=[3.0] * n_knots,
+            dz=[1.0 / (n_knots + 1)] * n_knots,
+            name="spline",
+        )
     if kind == "Stack":
         return Stack([SLD(3.47)(15, 3)], repeats=2, name="stack")
     raise ValueError(f"Unknown component kind: {kind!r}")

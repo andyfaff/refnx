@@ -8,6 +8,8 @@ from importlib import resources
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import pytest
+
 from qtpy import QtWidgets, QtCore
 from qtpy.QtCore import Qt
 
@@ -541,6 +543,20 @@ def test_spline_zgrad_exposed(qtbot):
         if getattr(obj, "attr_name", None) == "zgrad"
     ]
     assert len(rows) == 1
+
+
+def test_default_component_spline_n_knots():
+    from dialogs import default_component
+
+    # unspecified: the long-standing 2-knot default is unchanged
+    spline = default_component("Spline")
+    assert len(spline.vs) == len(spline.dz) == 2
+    assert [dz.value for dz in spline.dz] == [pytest.approx(1 / 3)] * 2
+
+    spline = default_component("Spline", n_knots=4)
+    assert len(spline.vs) == len(spline.dz) == 4
+    # evenly spaced across n_knots + 1 intervals
+    assert [dz.value for dz in spline.dz] == [pytest.approx(1 / 5)] * 4
 
 
 def test_component_property_rows_ignored_by_link_and_auto_limits(qtbot):

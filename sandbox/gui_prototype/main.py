@@ -842,6 +842,19 @@ class MainWindow(QtWidgets.QMainWindow):
             if not lipid_dialog.exec():
                 return
             component = lipid_dialog.component()
+        elif kind == "Spline":
+            # the number of knots is structural -- it's how many vs/dz
+            # parameters the Component even has -- unlike each knot's
+            # own placeholder value, it can't be changed afterward
+            # through the parameter tree, so it has to be asked now.
+            # Cancelling aborts the whole Add Component operation, same
+            # as the LipidLeaflet picker above.
+            n_knots, ok = QtWidgets.QInputDialog.getInt(
+                self, "Add Spline", "Number of knots:", 2, 1, 20
+            )
+            if not ok:
+                return
+            component = default_component(kind, n_knots=n_knots)
         else:
             component = default_component(kind)
 
