@@ -172,6 +172,75 @@ def test_left_panes_are_independently_dockable(qtbot):
     assert not win.parameters_dock.isFloating()
 
 
+def test_view_menu_can_show_a_hidden_dock(qtbot):
+    # a QDockWidget's own titlebar close button (or floating it, then
+    # closing the floating window, exactly like an ordinary window)
+    # just hides it -- toggleViewAction() is Qt's own bidirectional
+    # show/hide action for exactly that, and needs to actually be
+    # reachable from the menu, not just exist as an unused method on
+    # the dock.
+    win = MainWindow(build_demo_datastore())
+    qtbot.add_widget(win)
+
+    win.structure_dock.setFloating(True)
+    win.structure_dock.close()
+    # isHidden(), not isVisible() -- win is never shown in this test, so
+    # isVisible() (which requires the whole ancestor chain, including
+    # win itself, to be shown on screen) would read False regardless of
+    # the dock's own explicit state
+    assert win.structure_dock.isHidden()
+
+    # keep every menu-bar action referenced (not just the "&View" one)
+    # -- discarding the rest via e.g. next(a for a in ... if ...) has
+    # been observed to crash with a "QMenu already deleted" RuntimeError
+    menu_bar_actions = {a.text(): a for a in win.menuBar().actions()}
+    view_menu = menu_bar_actions["&View"].menu()
+    toggle_actions = {a.text(): a for a in view_menu.actions()}
+    assert set(toggle_actions) == {"Structure", "Parameters"}
+
+    toggle_actions["Structure"].trigger()
+    assert not win.structure_dock.isHidden()
+
+
+def test_undocking_then_closing_a_pane_is_recoverable_after_restart(
+    qtbot, tmp_path, monkeypatch
+):
+    # a real bug: floating a dock, then closing the floating window,
+    # just hides the QDockWidget rather than destroying it --
+    # save_window_state/restore_window_state then faithfully
+    # round-trip that hidden state across a restart, with nothing in
+    # the UI pointing at a way back before the View menu above existed
+    # -- reported as "I can't see the structure pane any more" /
+    # "if you undock a pane, close the app, restart the app, then that
+    # pane is lost somewhere".
+    settings_path = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(
+        persistence,
+        "QSettings",
+        lambda *a: QtCore.QSettings(
+            settings_path, QtCore.QSettings.Format.IniFormat
+        ),
+    )
+
+    closed = MainWindow(build_demo_datastore())
+    qtbot.add_widget(closed)
+    closed.structure_dock.setFloating(True)
+    closed.structure_dock.close()
+    # isHidden(), not isVisible() -- neither window is shown in this
+    # test, so isVisible() would read False regardless of a dock's own
+    # explicit state, see the same note in test_view_menu_can_show_a_
+    # hidden_dock above
+    assert closed.structure_dock.isHidden()
+    persistence.save_window_state(closed)
+
+    reopened = MainWindow(build_demo_datastore())
+    qtbot.add_widget(reopened)
+    reopened.restore_layout()
+
+    assert not reopened.structure_dock.isHidden()
+    assert not reopened.parameters_dock.isHidden()
+
+
 def test_left_panes_start_wider_than_the_plots(qtbot):
     # Qt's default dock sizing is based on each pane's size hint, which
     # leaves them cramped even once their columns are auto-sized to fit

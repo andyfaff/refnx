@@ -52,7 +52,7 @@ from dialogs import (
     LipidLeafletDialog,
     default_component,
 )
-from delegates import SelectAllDelegate
+from delegates import ParameterTreeDelegate
 import persistence
 
 
@@ -186,8 +186,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # replaces the whole value instead of inserting into whatever
         # got (inconsistently, platform-dependently) selected around
         # the click, which is what made precise/small values like
-        # 2.123e-5 hard to enter cleanly
-        self.table_view.setItemDelegate(SelectAllDelegate(self.table_view))
+        # 2.123e-5 hard to enter cleanly. Also draws a rule above each
+        # dataset's own row (except the first) to separate multiple
+        # datasets' parameters when every group is expanded at once.
+        self.table_view.setItemDelegate(ParameterTreeDelegate(self.table_view))
         self.table_view.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
@@ -334,6 +336,16 @@ class MainWindow(QtWidgets.QMainWindow):
         remove_action = file_menu.addAction("Remove Selected Dataset")
         remove_action.triggered.connect(self.on_remove_dataset_triggered)
 
+        # a QDockWidget's own titlebar close button (or floating it and
+        # closing the floating window) just hides it -- toggleViewAction()
+        # is Qt's own bidirectional show/hide action for exactly that, so
+        # this is always available as a way back regardless of how a
+        # dock ended up hidden, including via a stale restored layout
+        # (see restore_layout).
+        view_menu = self.menuBar().addMenu("&View")
+        view_menu.addAction(self.structure_dock.toggleViewAction())
+        view_menu.addAction(self.parameters_dock.toggleViewAction())
+
         structure_menu = self.menuBar().addMenu("&Structure")
 
         add_component_action = structure_menu.addAction("Add Component...")
@@ -463,6 +475,24 @@ class MainWindow(QtWidgets.QMainWindow):
         # that connection must not outlive this window's canvases.
         self.plot_controller.close()
         super().closeEvent(event)
+
+    def restore_layout(self):
+        """Applies previously-saved window/dock geometry (see main()),
+        but never leaves Structure or Parameters actually hidden.
+        QMainWindow.saveState()/restoreState() bundles visibility in
+        with position/floating/tabbing as one opaque blob, and a
+        QDockWidget's own titlebar close button -- or floating it, then
+        closing the floating window, exactly like an ordinary window --
+        just hides it, not destroys it. Without this, that hidden state
+        round-trips faithfully: undock a pane, close it, restart the
+        app, and it's gone with nothing in the UI pointing at the View
+        menu's toggle actions as the way back -- reported as "I can't
+        see the structure pane any more" before View existed at all.
+        Position/floating/tabbing arrangement still restores normally;
+        only visibility is forced back on."""
+        persistence.restore_window_state(self)
+        for dock in (self.structure_dock, self.parameters_dock):
+            dock.setVisible(True)
 
     def resizeEvent(self, event):
         # belt-and-suspenders alongside _relayout_central_widget below:
@@ -1201,15 +1231,15 @@ def main():
     win.resize(1200, 650)
     # restored after the default resize above, so it only has an effect
     # once something's actually been saved -- otherwise the default
-    # stands. Deliberately done here rather than in MainWindow itself
-    # (e.g. __init__/closeEvent): every test in test_prototype.py
+    # stands. Deliberately called here rather than from MainWindow
+    # itself (e.g. __init__/closeEvent): every test in test_prototype.py
     # constructs a bare MainWindow, and persistence tied to its own
     # lifecycle would make the suite read/write the developer's real
     # QSettings on every run. aboutToQuit (rather than closeEvent) is
     # used to save, since it fires once per app exit regardless of
     # which window (there's only one here, but the same reasoning
     # applies) triggered it, and while everything's still alive.
-    persistence.restore_window_state(win)
+    win.restore_layout()
     app.aboutToQuit.connect(lambda: persistence.save_window_state(win))
     win.show()
     return app, win

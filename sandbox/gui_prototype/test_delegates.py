@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from qtpy import QtWidgets, QtTest
 from qtpy.QtCore import Qt
 
-from delegates import SelectAllDelegate
+from delegates import ParameterTreeDelegate, SelectAllDelegate
 from main import build_demo_datastore, MainWindow
 
 
@@ -102,3 +102,32 @@ def test_lb_ub_data_is_a_formatted_string_not_a_raw_float(qtbot):
 
     assert win.parameter_model.data(lb_idx) == "200"
     assert win.parameter_model.data(ub_idx) == "300"
+
+
+def test_parameter_tree_uses_the_dataset_boundary_delegate(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    assert isinstance(win.table_view.itemDelegate(), ParameterTreeDelegate)
+
+
+def test_dataset_boundary_detected_only_at_a_second_or_later_dataset(qtbot):
+    # two datasets loaded (build_demo_datastore) -- their top-level rows
+    # are index(0, 0) and index(1, 0) in ParameterTableModel, see
+    # ParameterTableModel.set_datastore/_populate_dataset
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    first_dataset_idx = win.parameter_model.index(0, 0)
+    second_dataset_idx = win.parameter_model.index(1, 0)
+    nested_idx = win.parameter_model.index(0, 0, first_dataset_idx)
+
+    assert first_dataset_idx.isValid() and second_dataset_idx.isValid()
+    assert nested_idx.isValid()
+
+    is_boundary = ParameterTreeDelegate.is_dataset_boundary
+    assert not is_boundary(first_dataset_idx)  # nothing precedes it
+    assert is_boundary(second_dataset_idx)  # a new dataset starts here
+    assert not is_boundary(nested_idx)  # not a top-level dataset row at all
