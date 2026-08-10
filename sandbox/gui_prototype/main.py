@@ -22,6 +22,7 @@ Run with:
 import sys
 from copy import deepcopy
 from importlib import resources
+from pathlib import Path
 
 import numpy as np
 
@@ -297,6 +298,11 @@ class MainWindow(QtWidgets.QMainWindow):
         load_model_action = file_menu.addAction("Load Model...")
         load_model_action.triggered.connect(self.on_load_model_triggered)
 
+        load_experiment_action = file_menu.addAction("Load Experiment...")
+        load_experiment_action.triggered.connect(
+            self.on_load_experiment_triggered
+        )
+
         reload_data_action = file_menu.addAction("Reload Datasets")
         reload_data_action.setShortcut(QtGui.QKeySequence("Ctrl+R"))
         reload_data_action.triggered.connect(self.on_reload_data_triggered)
@@ -305,6 +311,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         save_model_action = file_menu.addAction("Save Model...")
         save_model_action.triggered.connect(self.on_save_model_triggered)
+
+        save_experiment_action = file_menu.addAction("Save Experiment...")
+        save_experiment_action.triggered.connect(
+            self.on_save_experiment_triggered
+        )
 
         file_menu.addSeparator()
 
@@ -590,6 +601,35 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._replace_model(data_object, model, str(path))
 
+    def on_load_experiment_triggered(self):
+        """Replaces the whole datastore (every dataset, model, and
+        which ones are checked for fitting) and the active transform
+        from a single saved experiment -- everything Save Experiment
+        wrote out, recreated in one go. Unlike Load Model, which
+        overwrites one dataset's model in place, this discards
+        whatever's currently loaded entirely."""
+        path, ok = getopenfilename(
+            self,
+            caption="Select an experiment file",
+            filters="Experiment Files (*.mtft)",
+        )
+        if not ok or not path:
+            return
+
+        try:
+            datastore, transform_form = persistence.load_experiment(path)
+        except Exception as e:
+            self.msg(f"Couldn't load experiment from {path!r}: {e!r}")
+            return
+
+        self.datastore = datastore
+        action = self._transform_actions.get(transform_form)
+        if action is not None:
+            action.setChecked(True)
+        self.transform = Transform(transform_form)
+        self._refresh()
+        self.msg(f"Loaded experiment from {path}")
+
     def on_tree_context_menu(self, position):
         index = self.tree_view.indexAt(position)
         if not index.isValid() or not len(self.datastore):
@@ -707,6 +747,33 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         self.msg(f"Saved {data_object.name}'s model to {path}")
+
+    def on_save_experiment_triggered(self):
+        """Saves everything needed to recreate the analysis: every
+        loaded dataset and its model (parameters, bounds, constraints,
+        which ones are varying), which datasets are checked for
+        fitting, and the active transform. Doesn't need a dataset
+        selected first, unlike Save Model -- it's the whole datastore,
+        not any one dataset's model."""
+        path, ok = getsavefilename(
+            self, caption="Save experiment as", basedir="experiment.mtft"
+        )
+        if not ok or not path:
+            return
+
+        efp = Path(path)
+        if efp.suffix != ".mtft":
+            path = str(efp.parent / (efp.stem + ".mtft"))
+
+        try:
+            persistence.save_experiment(
+                self.datastore, self.transform.form, path
+            )
+        except Exception as e:
+            self.msg(f"Couldn't save experiment to {path!r}: {e!r}")
+            return
+
+        self.msg(f"Saved experiment to {path}")
 
     def on_remove_dataset_triggered(self):
         data_object = self._selected_data_object()
@@ -1106,6 +1173,18 @@ def main():
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
     win.resize(1200, 650)
+    # restored after the default resize above, so it only has an effect
+    # once something's actually been saved -- otherwise the default
+    # stands. Deliberately done here rather than in MainWindow itself
+    # (e.g. __init__/closeEvent): every test in test_prototype.py
+    # constructs a bare MainWindow, and persistence tied to its own
+    # lifecycle would make the suite read/write the developer's real
+    # QSettings on every run. aboutToQuit (rather than closeEvent) is
+    # used to save, since it fires once per app exit regardless of
+    # which window (there's only one here, but the same reasoning
+    # applies) triggered it, and while everything's still alive.
+    persistence.restore_window_state(win)
+    app.aboutToQuit.connect(lambda: persistence.save_window_state(win))
     win.show()
     return app, win
 

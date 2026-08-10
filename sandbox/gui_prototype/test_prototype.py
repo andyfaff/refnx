@@ -1326,6 +1326,54 @@ def test_save_model_round_trips(qtbot, tmp_path, monkeypatch):
     assert reloaded.bkg.value == datastore["e361r"].model.bkg.value
 
 
+def test_save_experiment_round_trips(qtbot, tmp_path, monkeypatch):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    datastore["e365r"].in_fit = False
+    win.on_transform_changed("YX4")
+
+    epath = tmp_path / "saved.mtft"
+    monkeypatch.setattr(
+        "main.getsavefilename", lambda *a, **k: (str(epath), True)
+    )
+    win.on_save_experiment_triggered()
+
+    reloaded, transform_form = persistence.load_experiment(epath)
+    assert reloaded.names == datastore.names
+    assert reloaded["e365r"].in_fit is False
+    assert reloaded["e361r"].in_fit is True
+    assert transform_form == "YX4"
+    assert (
+        reloaded["e361r"].model.bkg.value == datastore["e361r"].model.bkg.value
+    )
+
+
+def test_load_experiment_replaces_whole_datastore(
+    qtbot, tmp_path, monkeypatch
+):
+    saved_datastore = build_demo_datastore()
+    saved_datastore["e361r"].model.bkg.value = 1.23e-6
+    epath = tmp_path / "saved.mtft"
+    persistence.save_experiment(saved_datastore, "logY", epath)
+
+    win = MainWindow(build_demo_datastore())
+    qtbot.add_widget(win)
+
+    monkeypatch.setattr(
+        "main.getopenfilename", lambda *a, **k: (str(epath), True)
+    )
+    win.on_load_experiment_triggered()
+
+    assert win.datastore["e361r"].model.bkg.value == 1.23e-6
+    assert win.transform.form == "logY"
+    assert win._transform_actions["logY"].isChecked()
+    # the tree picked up the newly-loaded datastore too, not just
+    # win.datastore itself being reassigned
+    assert win.tree_model.rowCount() == 2
+
+
 def test_remove_dataset(qtbot):
     datastore = build_demo_datastore()
     win = MainWindow(datastore)
