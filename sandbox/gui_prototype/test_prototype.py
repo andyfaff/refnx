@@ -1068,6 +1068,55 @@ def test_fit_proceeds_when_bounds_are_finite(qtbot):
         assert win.fit_button.text() == "Abort"
 
 
+def test_export_code_fragment_needs_a_checked_dataset(qtbot, monkeypatch):
+    datastore = build_demo_datastore()
+    for do in datastore:
+        do.in_fit = False
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    save_calls = []
+    monkeypatch.setattr(
+        "main.getsavefilename",
+        lambda *a, **k: save_calls.append(1) or ("", False),
+    )
+    win.on_export_code_fragment_triggered()
+
+    # refused before ever asking where to save -- same guard
+    # _fitting_objective() gives on_fit_clicked
+    assert save_calls == []
+
+
+def test_export_code_fragment_writes_the_exact_fitting_setup(
+    qtbot, tmp_path, monkeypatch
+):
+    # the exported script has to be *the* fitting setup "Fit checked
+    # datasets" would use, not a second, potentially different one --
+    # only e361r checked, with a distinctive bkg value, proves the
+    # export reflects that specific setup rather than e.g. always
+    # exporting every loaded dataset regardless of its checkbox
+    datastore = build_demo_datastore()
+    datastore["e365r"].in_fit = False
+    datastore["e361r"].model.bkg.value = 4.56e-6
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    path = tmp_path / "mcmc.py"
+    monkeypatch.setattr(
+        "main.getsavefilename", lambda *a, **k: (str(path), True)
+    )
+    win.on_export_code_fragment_triggered()
+
+    assert path.exists()
+    code = path.read_text()
+    compile(code, str(path), "exec")  # a real, runnable script
+
+    assert "4.56e-06" in code
+    # a single checked dataset -> a plain Objective, not a
+    # GlobalObjective wrapping datasets that were never checked
+    assert "GlobalObjective(" not in code
+
+
 def test_editing_controls_disabled_while_fit_is_running(qtbot):
     # the background fit thread continuously reads *and writes* the
     # fitted model's Parameter objects (Objective.setp() every

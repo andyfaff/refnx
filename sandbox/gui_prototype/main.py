@@ -34,6 +34,7 @@ import refnx.reflect._app
 from refnx.dataset import ReflectDataset
 from refnx.reflect import SLD, ReflectModel, Stack
 from refnx.analysis import Objective, GlobalObjective, Parameter, Transform
+from refnx.reflect._code_fragment import code_fragment
 
 from datastore import DataObject, DataStore
 from models import (
@@ -329,6 +330,13 @@ class MainWindow(QtWidgets.QMainWindow):
         save_experiment_action = file_menu.addAction("Save Experiment...")
         save_experiment_action.triggered.connect(
             self.on_save_experiment_triggered
+        )
+
+        export_code_fragment_action = file_menu.addAction(
+            "Export Code Fragment..."
+        )
+        export_code_fragment_action.triggered.connect(
+            self.on_export_code_fragment_triggered
         )
 
         file_menu.addSeparator()
@@ -817,6 +825,40 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.msg(f"Saved experiment to {path}")
 
+    def on_export_code_fragment_triggered(self):
+        """Exports a standalone, terminal-runnable Python script that
+        recreates the exact fitting setup "Fit checked datasets" (or
+        Export Code Fragment being run from the same window) would use
+        -- built by _fitting_objective(), the shared source of truth
+        for what's actually checked, so the two can't drift apart --
+        e.g. for running MCMC sampling separately from the GUI, or on
+        a cluster. Mirrors the production app's own Export Code
+        Fragment (refnx.reflect._code_fragment.code_fragment)."""
+        objective = self._fitting_objective()
+        if objective is None:
+            self.msg(
+                "Check at least one dataset in the tree to export a "
+                "fitting setup for it."
+            )
+            return
+
+        code = code_fragment(objective)
+
+        path, ok = getsavefilename(
+            self, caption="Save code fragment as", basedir="mcmc.py"
+        )
+        if not ok or not path:
+            return
+
+        try:
+            with open(path, "w") as f:
+                f.write(code)
+        except Exception as e:
+            self.msg(f"Couldn't save code fragment to {path!r}: {e!r}")
+            return
+
+        self.msg(f"Saved code fragment to {path}")
+
     def on_remove_dataset_triggered(self):
         data_object = self._selected_data_object()
         if data_object is None:
@@ -1125,15 +1167,15 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.msg("No varying parameters to set bounds on.")
 
-    def on_fit_clicked(self):
-        if self.fit_controller.running:
-            self.fit_controller.abort()
-            return
-
+    def _fitting_objective(self):
+        """The Objective (or GlobalObjective, for more than one checked
+        dataset) that "Fit checked datasets" runs -- factored out so
+        Export Code Fragment can export exactly this fitting setup,
+        not a second copy of this logic that could drift out of sync
+        with it. None if nothing is checked for fitting."""
         fitted = self.datastore.fitted_objects()
         if not fitted:
-            self.msg("Check at least one dataset in the tree to fit it.")
-            return
+            return None
 
         objectives = [
             Objective(
@@ -1144,11 +1186,21 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             for do in fitted
         ]
-        objective = (
+        return (
             objectives[0]
             if len(objectives) == 1
             else GlobalObjective(objectives)
         )
+
+    def on_fit_clicked(self):
+        if self.fit_controller.running:
+            self.fit_controller.abort()
+            return
+
+        objective = self._fitting_objective()
+        if objective is None:
+            self.msg("Check at least one dataset in the tree to fit it.")
+            return
 
         method = "differential_evolution"
         if method == "differential_evolution":
@@ -1170,7 +1222,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.fit_button.setText("Abort")
         self._set_fit_running_ui_state(True)
-        names = ", ".join(do.name for do in fitted)
+        names = ", ".join(do.name for do in self.datastore.fitted_objects())
         self.msg(f"Fitting {names}...")
         self.fit_controller.start(
             objective,
