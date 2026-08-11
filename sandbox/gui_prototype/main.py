@@ -31,7 +31,7 @@ from qtpy.compat import getopenfilename, getopenfilenames, getsavefilename
 
 import refnx.analysis
 import refnx.reflect._app
-from refnx.dataset import ReflectDataset
+from refnx.dataset import ReflectDataset, load_data
 from refnx.reflect import SLD, ReflectModel, Stack
 from refnx.analysis import Objective, GlobalObjective, Parameter, Transform
 from refnx.reflect._code_fragment import code_fragment
@@ -583,7 +583,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for path in paths:
             try:
-                dataset = ReflectDataset(path)
+                # load_data() tries ORSO's format (.orb/.ort) first,
+                # then refnx's own ReflectDataset text format, then
+                # falls back to a bare Data1D -- one loader handles
+                # whichever of those a given file actually is, rather
+                # than this needing to guess from the file extension.
+                dataset = load_data(path)
             except Exception as e:
                 self.msg(f"Couldn't load {path!r} as a dataset: {e!r}")
                 continue
@@ -599,12 +604,13 @@ class MainWindow(QtWidgets.QMainWindow):
         """Re-reads every loaded dataset from whatever file it was
         originally loaded from -- e.g. a live experiment still
         appending counts to the same file. No separate path-tracking
-        needed: ReflectDataset already records its own source file as
-        `.filename` when constructed from one (`build_demo_datastore`'s
-        datasets included, since they're loaded from real files too),
-        and `.refresh()` re-reads from exactly that path. A dataset
-        that isn't backed by a file (constructed purely in memory) is
-        just skipped, not an error."""
+        needed: every Data1D-family dataset (ReflectDataset, OrsoDataset,
+        whichever load_data() decided a file was) already records its
+        own source file as `.filename` when constructed from one
+        (`build_demo_datastore`'s datasets included, since they're
+        loaded from real files too), and `.refresh()` re-reads from
+        exactly that path. A dataset that isn't backed by a file
+        (constructed purely in memory) is just skipped, not an error."""
         reloaded, skipped, failed = [], [], []
         for data_object in self.datastore:
             filename = getattr(data_object.dataset, "filename", None)

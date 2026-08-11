@@ -18,13 +18,16 @@ uncertainties -- not needed to demonstrate the architecture point.
 from dataclasses import dataclass
 
 from refnx.reflect import ReflectModel
-from refnx.dataset import ReflectDataset
+from refnx.dataset import Data1D
 
 
 @dataclass
 class DataObject:
     name: str
-    dataset: ReflectDataset
+    # ReflectDataset (refnx's own text format), OrsoDataset (ORSO's
+    # .orb/.ort files), or a bare Data1D -- whatever refnx.dataset.
+    # load_data() figured out the file actually was.
+    dataset: Data1D
     model: ReflectModel
     in_fit: bool = True
 

@@ -14,6 +14,8 @@ from qtpy import QtWidgets, QtGui, QtCore
 from qtpy.QtCore import Qt
 
 import refnx.reflect.tests
+import refnx.dataset.tests
+from refnx.dataset import OrsoDataset
 from refnx.reflect import SLD, ReflectModel
 from refnx.analysis import Objective
 
@@ -1218,6 +1220,29 @@ def test_load_data_adds_rather_than_replaces(monkeypatch, qtbot):
     # called again after a dataset of a different length was loaded
     win.plot_controller.update(win.datastore)
     assert win.tree_model.rowCount() == 3
+
+
+def test_load_data_reads_an_orso_orb_file(monkeypatch, qtbot):
+    # load_data() tries ORSO's own format before falling back to
+    # refnx's ReflectDataset text format -- ReflectDataset(path) alone
+    # (the previous loader) can't read one at all
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    orb_path = str(resources.files(refnx.dataset.tests) / "test.orb")
+    monkeypatch.setattr(
+        "main.getopenfilenames", lambda *a, **k: ([orb_path], True)
+    )
+    win.on_load_data_triggered()
+
+    assert len(win.datastore) == 3
+    loaded = [do for do in win.datastore if do.dataset.filename == orb_path]
+    assert len(loaded) == 1
+    assert isinstance(loaded[0].dataset, OrsoDataset)
+    # picked up a real model too, same as any other freshly-loaded
+    # dataset, not left without one
+    assert loaded[0].model is not None
 
 
 def test_reload_data_calls_refresh_on_datasets_with_a_file(qtbot, monkeypatch):
