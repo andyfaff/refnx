@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import pytest
 
-from qtpy import QtWidgets, QtCore
+from qtpy import QtWidgets, QtGui, QtCore
 from qtpy.QtCore import Qt
 
 import refnx.reflect.tests
@@ -275,6 +275,27 @@ def test_plot_canvases_use_an_expanding_size_policy(qtbot):
         sp = canvas.sizePolicy()
         assert sp.horizontalPolicy() == expanding
         assert sp.verticalPolicy() == expanding
+
+
+def test_plot_background_is_white_in_light_mode_not_grey(qtbot):
+    # QPalette.Window is the *outer* chrome color (toolbars, menus,
+    # dock titlebars) -- a light grey rather than white on most
+    # light-mode desktop themes -- not the role meant for a
+    # content/document area like a plot canvas. Base is: the same role
+    # a QLineEdit or QListView's own background uses, white in light
+    # mode as expected here, and still correctly dark in dark mode.
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    import matplotlib.colors as mcolors
+
+    app = QtWidgets.QApplication.instance()
+    base_hex = app.palette().color(QtGui.QPalette.ColorRole.Base).name()
+    fig_bg_hex = mcolors.to_hex(
+        win.plot_controller.reflectivity_fig.patch.get_facecolor()
+    )
+    assert fig_bg_hex == base_hex
 
 
 def test_plots_expand_into_the_space_a_floated_dock_frees_up(qtbot):

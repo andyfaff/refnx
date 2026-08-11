@@ -89,10 +89,18 @@ class PlotController:
         labels, spines, and any existing legend -- to match the current
         Qt palette. Only chrome colors change; plotted line colors are
         left alone, since those come from matplotlib's own color cycle
-        and don't depend on the theme."""
+        and don't depend on the theme.
+
+        Uses Base/Text, not Window/WindowText -- Window is the *outer*
+        chrome color (toolbars, menus, dock titlebars), a light grey
+        rather than white on most light-mode desktop themes; Base is
+        the role actually meant for a content/document area like this
+        one (the same role a QLineEdit or QListView's own background
+        uses), white in light mode and dark in dark mode as expected.
+        """
         palette = QApplication.instance().palette()
-        bg = palette.color(QPalette.ColorRole.Window).name()
-        fg = palette.color(QPalette.ColorRole.WindowText).name()
+        bg = palette.color(QPalette.ColorRole.Base).name()
+        fg = palette.color(QPalette.ColorRole.Text).name()
 
         for fig, ax in (
             (self.reflectivity_fig, self.reflectivity_ax),
