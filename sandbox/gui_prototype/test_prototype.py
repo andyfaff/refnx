@@ -1486,6 +1486,17 @@ def test_reload_datasets_action_has_ctrl_r_shortcut(qtbot):
     assert by_text["Reload Datasets"].shortcut().toString() == "Ctrl+R"
 
 
+def test_load_data_action_has_ctrl_l_shortcut(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    actions = {a.text(): a for a in win.menuBar().actions()}
+    file_menu = actions["&File"].menu()
+    by_text = {a.text(): a for a in file_menu.actions()}
+    assert by_text["Load Data..."].shortcut().toString() == "Ctrl+L"
+
+
 def test_load_model_applies_only_to_selected_dataset(
     qtbot, tmp_path, monkeypatch
 ):

@@ -311,6 +311,7 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu = self.menuBar().addMenu("&File")
 
         load_data_action = file_menu.addAction("Load Data...")
+        load_data_action.setShortcut(QtGui.QKeySequence("Ctrl+L"))
         load_data_action.triggered.connect(self.on_load_data_triggered)
 
         load_model_action = file_menu.addAction("Load Model...")
