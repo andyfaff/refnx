@@ -147,6 +147,9 @@ class PlotController:
         self._reset_axes(transform)
 
         for data_object in datastore:
+            if not data_object.visible:
+                continue
+
             dataset = data_object.dataset
             model = data_object.model
             x, y, y_err = dataset.x, dataset.y, dataset.y_err
@@ -187,7 +190,7 @@ class PlotController:
             z, sld = model.structure.sld_profile()
             self.sld_ax.plot(z, sld, color=color, label=data_object.name)
 
-        if len(datastore):
+        if any(data_object.visible for data_object in datastore):
             self.reflectivity_ax.legend(fontsize="small")
             self.sld_ax.legend(fontsize="small")
 

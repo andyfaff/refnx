@@ -471,14 +471,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_navigation_tree_view(self):
         """Same reasoning as _refresh_parameter_tree_view: expand
-        everything and size the Dataset column to fit its content --
-        Qt's default column width has no relation to what's actually in
-        it. The chi2 column stretches (see header().setStretchLastSection
-        in _build_ui) rather than being sized to content -- it's always
-        short, so fitting it exactly would just leave a large blank gap
-        after it instead."""
+        everything and size the Dataset/chi2 columns to fit their
+        content -- Qt's default column width has no relation to what's
+        actually in them. Visible (the last column) stretches instead
+        (see header().setStretchLastSection in _build_ui) rather than
+        being sized to content -- it's always short, so fitting it
+        exactly would just leave a large blank gap after it instead."""
         self.tree_view.expandAll()
         self.tree_view.resizeColumnToContents(0)
+        self.tree_view.resizeColumnToContents(
+            self.tree_model.COLUMNS.index("chi2")
+        )
 
     def closeEvent(self, event):
         # plot_controller.close() disconnects it from the application's
@@ -1102,18 +1105,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_plots_and_chi2()
 
     def on_tree_model_changed(self, top_left, bottom_right, roles):
-        # tree_model.dataChanged fires for three different things: a
-        # dataset's checkbox being (un)checked (ParameterTableModel
+        # tree_model.dataChanged fires for four different things: a
+        # dataset's in_fit checkbox being (un)checked (ParameterTableModel
         # only shows parameters for currently-checked datasets, so it
         # needs rebuilding), a Component being renamed (its group label
-        # in the parameter tree needs to pick up the new name), or just
-        # the chi2 column refreshing (tree_model.refresh_chi2(), fired
-        # on every parameter edit -- far too often to also rebuild the
-        # entire parameter tree for). The chi2 column is the last one,
-        # so a change confined to it alone is never a checkbox/rename
-        # and needs nothing further here -- data() already recomputes
-        # chi2 on demand, that's the whole point of the signal.
-        if top_left.column() == self.tree_model.COLUMNS.index("chi2"):
+        # in the parameter tree needs to pick up the new name), a
+        # dataset's visible checkbox being (un)checked (only the plots
+        # need refreshing -- which parameters are shown never depends
+        # on visibility), or just the chi2 column refreshing
+        # (tree_model.refresh_chi2(), fired on every parameter edit --
+        # far too often to also rebuild the entire parameter tree, or
+        # redraw the plots, for).
+        column = self.tree_model.COLUMNS[top_left.column()]
+        if column == "chi2":
+            return
+        if column == "visible":
+            self.plot_controller.update(
+                self.datastore, transform=self.transform
+            )
             return
         self.parameter_model.set_datastore(self.datastore)
         self._refresh_parameter_tree_view()

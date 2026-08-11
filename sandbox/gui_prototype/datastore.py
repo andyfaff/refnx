@@ -30,6 +30,7 @@ class DataObject:
     dataset: Data1D
     model: ReflectModel
     in_fit: bool = True
+    visible: bool = True
 
 
 class DataStore:

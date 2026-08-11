@@ -220,8 +220,8 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
         node = parent.internalPointer() if parent.isValid() else self._root
         return len(node.children) if node is not None else 0
 
-    COLUMNS = ("name", "chi2")
-    HEADERS = ("Dataset", "χ²")
+    COLUMNS = ("name", "chi2", "visible")
+    HEADERS = ("Dataset", "χ²", "Visible")
 
     def columnCount(self, parent=QtCore.QModelIndex()):
         return len(self.COLUMNS)
@@ -250,6 +250,17 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
                     obj.model, obj.dataset, transform=self.transform
                 )
                 return f"{objective.chisqr():.4g}"
+            return None
+
+        if col == "visible":
+            if role == Qt.ItemDataRole.CheckStateRole and isinstance(
+                obj, DataObject
+            ):
+                return (
+                    Qt.CheckState.Checked
+                    if obj.visible
+                    else Qt.CheckState.Unchecked
+                )
             return None
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
@@ -285,11 +296,16 @@ class DataStoreTreeModel(QtCore.QAbstractItemModel):
         if not index.isValid():
             return False
         obj = index.internalPointer().obj
+        col = self.COLUMNS[index.column()]
 
         if role == Qt.ItemDataRole.CheckStateRole and isinstance(
             obj, DataObject
         ):
-            obj.in_fit = value == Qt.CheckState.Checked.value
+            checked = value == Qt.CheckState.Checked.value
+            if col == "visible":
+                obj.visible = checked
+            else:
+                obj.in_fit = checked
             self.dataChanged.emit(index, index, [role])
             return True
 

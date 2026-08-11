@@ -61,6 +61,65 @@ def test_navigation_tree_shows_chi2_per_dataset(qtbot):
     assert win.tree_model.data(component_index) is None
 
 
+def test_visible_checkbox_hides_a_dataset_from_the_plot_only(qtbot):
+    # visible (plot display) and in_fit (name column's checkbox --
+    # whether a dataset is included in the next fit / shown in the
+    # parameter tree) are deliberately independent: unchecking one
+    # must not touch the other
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    visible_col = win.tree_model.COLUMNS.index("visible")
+    e361_idx = win.tree_model.index(0, visible_col)
+    assert (
+        win.tree_model.data(e361_idx, Qt.ItemDataRole.CheckStateRole)
+        == Qt.CheckState.Checked
+    )
+
+    n_artists_before = len(win.plot_controller.reflectivity_ax.lines) + len(
+        win.plot_controller.reflectivity_ax.containers
+    )
+
+    ok = win.tree_model.setData(
+        e361_idx, Qt.CheckState.Unchecked.value, Qt.ItemDataRole.CheckStateRole
+    )
+    assert ok
+    assert datastore["e361r"].visible is False
+    assert datastore["e361r"].in_fit is True  # untouched
+
+    n_artists_after = len(win.plot_controller.reflectivity_ax.lines) + len(
+        win.plot_controller.reflectivity_ax.containers
+    )
+    assert n_artists_after < n_artists_before
+
+    # e361r's parameters are still shown -- visibility never affects
+    # in_fit/the parameter tree
+    dataset_names_in_table = {name for name, _ in win.parameter_model._rows}
+    assert "e361r" in dataset_names_in_table
+
+
+def test_in_fit_checkbox_does_not_affect_visibility(qtbot):
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    name_col = win.tree_model.COLUMNS.index("name")
+    e361_idx = win.tree_model.index(0, name_col)
+
+    win.tree_model.setData(
+        e361_idx, Qt.CheckState.Unchecked.value, Qt.ItemDataRole.CheckStateRole
+    )
+    assert datastore["e361r"].in_fit is False
+    assert datastore["e361r"].visible is True  # untouched
+
+
+def test_visible_column_is_third(qtbot):
+    win = MainWindow(build_demo_datastore())
+    qtbot.add_widget(win)
+    assert win.tree_model.COLUMNS[2] == "visible"
+
+
 def test_editing_a_value_refreshes_chi2_without_rebuilding_parameter_tree(
     qtbot, monkeypatch
 ):
@@ -133,7 +192,10 @@ def test_navigation_tree_dataset_column_sized_to_content_on_startup(
     qtbot.add_widget(win)
 
     tree_resized = [col for view, col in resized if view is win.tree_view]
-    assert tree_resized == [0]  # chi2 (the last column) stretches instead
+    # name and chi2 are sized to content; visible (the last column)
+    # stretches instead, so it's not resized here
+    chi2_col = win.tree_model.COLUMNS.index("chi2")
+    assert tree_resized == [0, chi2_col]
 
 
 def test_left_panes_are_independently_dockable(qtbot):
