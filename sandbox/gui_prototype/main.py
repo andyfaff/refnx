@@ -118,6 +118,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, datastore):
         super().__init__()
         self.setWindowTitle("Motofit prototype -- architecture sketch")
+        # lets dragEnterEvent/dropEvent below fire for a file dragged
+        # in from outside the app -- off by default on a QMainWindow
+        self.setAcceptDrops(True)
         self.datastore = datastore
         # Used both for the reflectivity plot (data and fit are shown
         # transformed, axis scale flipped to match -- see
@@ -502,6 +505,44 @@ class MainWindow(QtWidgets.QMainWindow):
         for dock in (self.structure_dock, self.parameters_dock):
             dock.setVisible(True)
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = [url.toLocalFile() for url in event.mimeData().urls()]
+        self._load_dropped_paths(paths)
+
+    def _load_dropped_paths(self, paths):
+        """Same layered fallback the production app's own drop
+        handling uses: exactly one dropped file is tried as a whole
+        experiment first (the most likely intent for a single file);
+        otherwise, or if that fails, every path is tried as a dataset,
+        and whatever's left over after that is tried as a model."""
+        if len(paths) == 1:
+            try:
+                self._load_experiment_path(paths[0])
+            except Exception:
+                pass
+            else:
+                self.msg(f"Loaded experiment from {paths[0]}")
+                return
+
+        # captured before _load_data_paths() below -- it resets the
+        # tree model (and with it, the current selection) if anything
+        # loads, which would otherwise make _load_model_path's own
+        # default (whichever dataset is currently selected) resolve to
+        # nothing by the time it runs
+        target = self._selected_data_object()
+
+        loaded = self._load_data_paths(paths)
+        remainder = [p for p in paths if p not in loaded]
+        for path in remainder:
+            try:
+                self._load_model_path(path, data_object=target)
+            except Exception:
+                pass
+
     def resizeEvent(self, event):
         # belt-and-suspenders alongside _relayout_central_widget below:
         # once both left-hand docks are floating, QMainWindowLayout was
@@ -575,12 +616,21 @@ class MainWindow(QtWidgets.QMainWindow):
         paths, ok = getopenfilenames(self, caption="Select dataset(s)")
         if not ok or not paths:
             return
+        self._load_data_paths(paths)
 
+    def _load_data_paths(self, paths):
+        """Loads each of `paths` as a dataset and adds it to the
+        datastore -- the part of on_load_data_triggered that doesn't
+        need a dialog, shared with dropEvent below. Returns whichever
+        paths actually loaded, so a caller (dropEvent) can work out
+        which ones didn't, to try loading those as something else
+        instead."""
         # new datasets start from a copy of an existing model if there
         # is one, otherwise a bare default -- so they're immediately
         # editable/fittable rather than landing with no model at all.
         template = self._selected_data_object()
 
+        loaded = []
         for path in paths:
             try:
                 # load_data() tries ORSO's format (.orb/.ort) first,
@@ -597,8 +647,10 @@ class MainWindow(QtWidgets.QMainWindow):
             name = dataset.name or "dataset"
             data_object = self.datastore.add(DataObject(name, dataset, model))
             self.msg(f"Loaded {data_object.name} from {path}")
+            loaded.append(path)
 
         self._refresh()
+        return loaded
 
     def on_reload_data_triggered(self):
         """Re-reads every loaded dataset from whatever file it was
@@ -650,11 +702,26 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            model = persistence.load_model(path)
+            self._load_model_path(path)
         except Exception as e:
             self.msg(f"Couldn't load {path!r} as a model: {e!r}")
-            return
 
+    def _load_model_path(self, path, data_object=None):
+        """Raises if `path` isn't a valid pickled model, or there's no
+        dataset to apply it to -- the part of on_load_model_triggered
+        that doesn't need a dialog, shared with dropEvent below, which
+        tries this for whatever a drop's paths didn't load as a
+        dataset. `data_object` defaults to whichever dataset is
+        currently selected, same as on_load_model_triggered -- passed
+        explicitly by the drop handler instead, since loading data
+        files first (see _load_dropped_paths) resets the tree model,
+        and the selection along with it, before this would otherwise
+        run."""
+        if data_object is None:
+            data_object = self._selected_data_object()
+        if data_object is None:
+            raise ValueError("no dataset selected to apply a model to")
+        model = persistence.load_model(path)
         self._replace_model(data_object, model, str(path))
 
     def on_load_experiment_triggered(self):
@@ -673,18 +740,26 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            datastore, transform_form = persistence.load_experiment(path)
+            self._load_experiment_path(path)
         except Exception as e:
             self.msg(f"Couldn't load experiment from {path!r}: {e!r}")
             return
 
+        self.msg(f"Loaded experiment from {path}")
+
+    def _load_experiment_path(self, path):
+        """Raises if `path` isn't a valid experiment file -- the part
+        of on_load_experiment_triggered that doesn't need a dialog,
+        shared with dropEvent below, which tries this first for a
+        single dropped file before falling back to loading it as a
+        dataset or a model instead."""
+        datastore, transform_form = persistence.load_experiment(path)
         self.datastore = datastore
         action = self._transform_actions.get(transform_form)
         if action is not None:
             action.setChecked(True)
         self.transform = Transform(transform_form)
         self._refresh()
-        self.msg(f"Loaded experiment from {path}")
 
     def on_tree_context_menu(self, position):
         index = self.tree_view.indexAt(position)

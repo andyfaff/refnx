@@ -1245,6 +1245,112 @@ def test_load_data_reads_an_orso_orb_file(monkeypatch, qtbot):
     assert loaded[0].model is not None
 
 
+def test_main_window_accepts_drops(qtbot):
+    # off by default on a QMainWindow -- dragEnterEvent/dropEvent never
+    # fire at all without this
+    win = MainWindow(build_demo_datastore())
+    qtbot.add_widget(win)
+    assert win.acceptDrops()
+
+
+def test_drag_enter_accepts_urls_only(qtbot):
+    win = MainWindow(build_demo_datastore())
+    qtbot.add_widget(win)
+
+    mime_data = QtCore.QMimeData()
+    mime_data.setUrls([QtCore.QUrl.fromLocalFile("/tmp/whatever.txt")])
+    event = QtGui.QDragEnterEvent(
+        QtCore.QPoint(0, 0),
+        QtCore.Qt.DropAction.CopyAction,
+        mime_data,
+        QtCore.Qt.MouseButton.NoButton,
+        QtCore.Qt.KeyboardModifier.NoModifier,
+    )
+    win.dragEnterEvent(event)
+    assert event.isAccepted()
+
+    mime_data_no_urls = QtCore.QMimeData()
+    mime_data_no_urls.setText("just some text, not a file")
+    event2 = QtGui.QDragEnterEvent(
+        QtCore.QPoint(0, 0),
+        QtCore.Qt.DropAction.CopyAction,
+        mime_data_no_urls,
+        QtCore.Qt.MouseButton.NoButton,
+        QtCore.Qt.KeyboardModifier.NoModifier,
+    )
+    win.dragEnterEvent(event2)
+    assert not event2.isAccepted()
+
+
+def test_dropping_a_single_data_file_loads_it_via_a_real_drop_event(qtbot):
+    # goes through the actual dropEvent() override, not just the
+    # _load_dropped_paths() helper it delegates to -- proves the
+    # QMimeData/QUrl unwrapping works, not just the loading logic
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    pth = resources.files(refnx.reflect.tests)
+    data_path = str(pth / "smeared_theoretical.txt")
+
+    # mime_data must stay referenced for as long as `event` is in use --
+    # QDropEvent doesn't keep its QMimeData argument alive on its own,
+    # so letting it go out of scope (e.g. building it in a helper that
+    # only returns the event) gets it garbage-collected and crashes the
+    # very next access to event.mimeData() with a "libshiboken: ...
+    # already deleted" RuntimeError/segfault.
+    mime_data = QtCore.QMimeData()
+    mime_data.setUrls([QtCore.QUrl.fromLocalFile(data_path)])
+    event = QtGui.QDropEvent(
+        QtCore.QPointF(0, 0),
+        QtCore.Qt.DropAction.CopyAction,
+        mime_data,
+        QtCore.Qt.MouseButton.NoButton,
+        QtCore.Qt.KeyboardModifier.NoModifier,
+    )
+    win.dropEvent(event)
+
+    assert len(win.datastore) == 3
+
+
+def test_dropping_a_single_experiment_file_loads_it(qtbot, tmp_path):
+    saved = build_demo_datastore()
+    saved["e361r"].model.bkg.value = 9.99e-6
+    epath = tmp_path / "experiment.mtft"
+    persistence.save_experiment(saved, "YX4", epath)
+
+    win = MainWindow(build_demo_datastore())
+    qtbot.add_widget(win)
+
+    win._load_dropped_paths([str(epath)])
+
+    assert win.datastore["e361r"].model.bkg.value == 9.99e-6
+    assert win.transform.form == "YX4"
+
+
+def test_dropping_a_data_file_and_a_model_file_together(qtbot, tmp_path):
+    # more than one path -- or a single path that isn't a valid
+    # experiment -- falls through to loading every path as a dataset,
+    # then trying whatever's left over as a model
+    datastore = build_demo_datastore()
+    win = MainWindow(datastore)
+    qtbot.add_widget(win)
+
+    pth = resources.files(refnx.reflect.tests)
+    data_path = str(pth / "smeared_theoretical.txt")
+
+    other_model = ReflectModel(SLD(2.07) | SLD(4.5)(20, 2) | SLD(6.36)(0, 3))
+    mpath = tmp_path / "other_model.pkl"
+    persistence.save_model(other_model, mpath)
+
+    win.tree_view.setCurrentIndex(win.tree_model.index(0, 0))  # e361r
+    win._load_dropped_paths([data_path, str(mpath)])
+
+    assert len(win.datastore) == 3  # the data file loaded as a dataset
+    # the model file -- not a dataset -- applied to the selected one
+    assert datastore["e361r"].model.structure[1].sld.real.value == 4.5
+
+
 def test_reload_data_calls_refresh_on_datasets_with_a_file(qtbot, monkeypatch):
     # build_demo_datastore's datasets are loaded from real files, so
     # they already carry their own source path as dataset.filename --
