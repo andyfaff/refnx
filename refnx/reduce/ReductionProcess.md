@@ -207,6 +207,9 @@ Here we calculate the trajectory a neutron must take in order for it be emitted 
 ### Divide the reflected and direct beam spectra
 
 The intensity spectrum,`m_spec`, for the reflected beam (i.e. `I(lambda)`) is divided by `m_spec` for the direct beam. As this point we have reflectivity as a function of wavelength (exact wavelengths are contained in `m_lambda`).
+Given that the wavelength spectra were calculated by summing over the foreground region for a given wavelength, the processed reflectivity curves are said to have had 'constant wavelength integration'.
+Another mode of processing is possible, called 'constant Q integration'. In this mode the reflected detector image, `m_topandtail`, is divided through by the direct beam wavelength spectrum. The values for each of the foreground pixels in `m_topandtail` are then distributed into Q-bins, according to each pixel's Qz value, to furnish a reflectivity curve.
+For a given wavelength every pixel in the foreground region has a slightly different Qz value - pixels on one side of the foreground region have a lower 2theta compared to pixels on the other side of the foreground region. If they have slightly different 2theta values they must have slightly different angles of incidence. Lines of constant-Q run in diagonals across the detector image in `m_topandtail`.
 
 ### Calculate Q
 
