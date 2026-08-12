@@ -2,7 +2,7 @@
 
 Here we give an overview of the reduction steps performed by *refnx* for **Platypus** and **Spatz** reflectometry data. The process for both instruments is generally the same, albeit with a gravity correction for **Platypus**.
 
-## Obtaining an intensity/wavelength spectrum
+## Obtaining an intensity/wavelength spectrum, `PlatypusNexus.process`/`SpatzNexus.process`
 
 The datasets are saved in an HDF file that requires the `h5py` package to load them. The datasets are loaded when a `refnx.reduce.PlatypusNexus` (or `SpatzNexus`) object is created. After this one uses the `PlatypusNexus.process` method to calculate the intensity wavelength spectrum. The steps below are listed in the order that they occur. At the end of all these steps there are several arrays of interest:
 
@@ -139,3 +139,92 @@ The wavelength resolution has three main components:
  - burst time due to spacing between choppers. This gets larger as the distance between the choppers increases. It's also affected by phase opening.
  - crossing time, how quickly does a chopper cross a beam of finite height/width.
  - rebinning percentage, as this increases the wavelength resolution degrades.
+
+
+## Reducing specular reflectivity measurements
+
+### Creation of `PlatypusReduce`, `SpatzReduce` objects
+
+These objects reduce all specular reflectivity data for a given angle of incidence. They are created using the direct beam measurement.
+
+```angular2html
+reducer = PlatypusReduce("PLP0071234.nx.hdf")
+```
+
+The `PlatypusReduce.reduce` method is then called with the reflected beam run number. You can control various reduction options during the `ReductionOptions` keyword.
+
+```angular2html
+options = ReductionOptions(rebin_percent=2.0)
+datasets, redn_dct = reducer.reduce("PLP0071235.nx.hdf", **options)
+
+# the specular reflectivity datasets are listed in the datasets tuple
+first_dataset = datasets[0]
+```
+
+We now list all the steps taken when `PlatypusReduce.reduce` is called.
+
+### Direct beam and reflected beam processing
+
+The direct and reflected beam measurements are processed using `PlatypusNexus.process`, as described above, to furnish intensity-wavelength spectra, `I(lambda)`.
+It's important to note that the processing involves a common set of wavelength bins. i.e. once the wavelength bins have been determined for the direct beam processing, the exact same bins are used for processing the reflected beam measurement. This ensures that the `I(lambda)` spectra have identical wavelength axes (same number of points, same wavelengths).
+
+### Calculation of the exact angle of incidence
+
+This following description applies to all measurements on SPZ, and air-solid and solid-liquid on PLP. 
+After processing the individual spectra we know where the beam centres of the reflected and direct beams are, `m_beampos`. We also know where the detectors were situated for both these measurements.
+On both instruments the direct beam is measured with 2theta=0, i.e. an undiverted beam. For the reflected beam measurement we move the detector to a nominal 2theta, which is twice the nominal angle of incidence. On SPZ this is easily achieved by moving the detector arm on an arc. For PLP the detector moves vertically, by a distance `tan(2theta) * SDD`, where SDD is the sample to detector distance.
+Under such conditions, with perfect sample alignment, and perfect instrument motion, the beam centre for the reflected beam should be exactly the same as the direct beam (i.e. both beams hit the same place on the detector). This mode of operation minimises the effect of pixel-to-pixel detector efficiency.
+However, in the real world the direct and reflected beams may not have exactly the same beam centre.
+If the actual angle of incidence is slightly higher than the nominal angle of incidence, then the beam may be shifted to a slightly higher detector pixel, and vice versa.
+Given that we know the spatial extent of a pixel we can use the two beam centres to calculate the actual angle of incidence. For PLP the calculation is as follows:
+
+```angular2html
+SDD = 2512                                       #  mm
+detector_vertical_translation = 57.0             #  mm
+PIXEL_SIZE = 0.3                                 #  mm
+beam_pos_direct = 200                            #  pixel number
+beam_pos_reflect = 202
+
+diff_px = beam_pos_reflect - beam_pos_direct     # 2 pixels
+
+# the actual height above the direct beam where the reflected beam hits the
+# detector
+actual_height = detector_vertical_translation + diff_px * PIXEL_SIZE  # 57.6 mm
+
+actual_two_theta = atan(actual_height / SDD)     #  atan(57.6 /  2512) = 1.313 degrees
+
+actual_angle_incidence = actual_two_theta / 2    #  0.656
+```
+
+### Gravity correction for angle of incidence (PLP only)
+
+Neutrons travel under a parabolic trajectory under gravity. The parabolic nature is more pronounced for long wavelength neutrons, compared to shorter wavelengths, because they travel at slower speeds.
+For example a 20 Angstrom neutron travels at 197.8 m/s, a 2 Angstrom neutron travels at 1978 m/s. If both are emitted horizontally, then after 3 m the 2 Angstrom neutron will have only dropped by 0.011 mm, whereas the 20 Angstrom neutron has dropped by 1.13 mm.
+If one considers neutrons transiting between two collimation slits sited 3 m apart, then the 2 Angstrom neutron can have an almost horizontal trajectory to make it through both slits. In comparison the 20 Angstrom neutron needs to have a more pronounced trajectory as it leaves the first slit, in order to make it through the second slit. 
+A consequence of this pronounced trajectory for long wavelength neutrons is that they have higher angles of incidence onto the sample than short wavelength neutrons.
+Here we calculate the trajectory a neutron must take in order for it be emitted from the first collimation slit and still get through the second collimation slit. This trajectory is a 2nd order polynomial (with origin at the first collimation slit). The sample, sited a small distance after the second collimation slit, can be described by a straight line whose gradient is the tangent of the exact angle of incidence from the previous step. We can work out the coordinates of where the trajectory polynomial and the straight line intersect. By using the derivative of the trajectory and the derivative of the line we can work out the gravity corrected angle of incidence for that neutron. This correction is done on a wavelength-by-wavelength basis. 
+
+### Divide the reflected and direct beam spectra
+
+The intensity spectrum,`m_spec`, for the reflected beam (i.e. `I(lambda)`) is divided by `m_spec` for the direct beam. As this point we have reflectivity as a function of wavelength (exact wavelengths are contained in `m_lambda`).
+
+### Calculate Q
+
+The exact angle of incidence (with any applicable gravity correction) and the wavelength axis (`m_lambda`) of the intensity spectra is used to calculate Q.
+
+### Calculate Q resolution
+
+The wavelength resolution is an output from `PlatypusNexus.process`. Here this is added in quadrature (by adding fractional variances), to the angular resolution of the measurement, to give the Q-resolution:
+
+```angular2html
+dQ = Q * sqrt((d_lambda/lambda)^2 + (d_theta/theta)^2) 
+```
+### Write to file
+
+Reflectivity datasets are written to file, with Q/R/dR/dQ information in them. dR is the standard deviation of the reflectivity, R. dQ is the FWHM of the gaussian uncertainty for a given Q point.
+
+### Combining reflectivity curves from different angles of incidence
+
+Reflectivity from higher angles of incidence can be spliced together data from lower angles of incidence. When splicing the overlap region between the two datasets is determined, i.e. which datapoints overlap in Q.
+A multiplying scale factor is then determined that would bring each point in the overlap region of the second dataset to lie on a straight line drawn between bracketing points in the first dataset. The overall scaling factor is determined by weighting all the individual scale factors.
+All the reflectivities in the second dataset are multiplied by this value, before concatenating the data from the first and second angles, and writing the data to file. Concatenated datasets are typically named "c_PLPXXXXX", with the "c_" representing concatenated data.
